@@ -3,9 +3,14 @@
 
 from math import pi
 
+from motor_matching import Motor
 from parapy.geom import GeomBase, Box, Cylinder, translate, rotate
-from parapy.core import Input, Attribute, Part, child
+from parapy.core import Base, Input, Attribute, Part, child
 
+class PropulsionSystem(Base):
+    @Part
+    def Motor(self):
+        return Motor(KV = 3)
 
 class StairCase(GeomBase):
     """StairCase assembles ``n_step`` steps. Both dimensions and color of
