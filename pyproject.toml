@@ -1,0 +1,52 @@
+[project]
+name = "parapy_1.15"
+version = "0.1.0"
+description = "UV environment for parapy 1.15"
+readme = "README.md"
+requires-python = ">=3.12, <3.13"
+# Python 3.13 is also possible but not compatible with matlabengine
+dependencies = [
+    "parapy>=1.15, <1.16",
+    #"parapy-lib-fluent", # some examples of additional ParaPy  modules
+    #"parapy-lib-fem",
+    #"parapy-lib-xfoil",
+    #"parapy-lib-abaqus",
+    #"parapy-lib-avl",
+    "kbeutils",
+    "wxpython",
+    "matplotlib",
+    "pyqt6",
+    #"matlabengine==25.1",# version must match installed matlab version
+    "cairocffi",
+]
+
+
+[tool.uv]
+
+[tool.uv.sources]
+#wxpython = {path = "./wxPython-4.2.1-cp311-cp311-linux_x86_64.whl"}
+parapy = {index = "pypiparapy"}
+kbeutils = {path = "./kbeutils-1.0-py3-none-any.whl"}
+parapy-lib-xfoil = {index = "pypiparapy"}
+parapy-lib-abaqus = {index = "pypiparapy"}
+parapy-lib-avl = {index = "pypiparapy"}
+
+[[tool.uv.index]]
+name = "pypiparapy"
+verify_ssl = true
+url = "https://pypi.parapy.nl/simple/"
+# to access, there are two options:
+# 1:
+# set the following environment variables first:
+#UV_INDEX_pypiparapy_USERNAME=<username>
+#UV_INDEX_pypiparapy_PASSWORD=<password>
+#
+#2:
+# run this command on the commandline before installing (requires uv to b installed):
+# `uv auth login pypi.parapy.nl --username <username> --password <pw>`
+
+
+[[tool.uv.index]]
+name = "pypi"
+verify_ssl = true
+url = "https://pypi.org/simple"
