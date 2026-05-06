@@ -1,6 +1,6 @@
 import math
 from parapy.core import Base, Input, Attribute, Part, Sequence
-from src.blade_section import BladeSection
+from blade_section import BladeSection
 
 
 class Blade(Base):
