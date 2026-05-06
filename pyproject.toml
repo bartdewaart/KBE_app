@@ -18,6 +18,8 @@ dependencies = [
     "pyqt6",
     #"matlabengine==25.1",# version must match installed matlab version
     "cairocffi",
+    "pandas>=3.0.2",
+    "openpyxl>=3.1.5",
 ]
 
 

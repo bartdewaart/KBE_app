@@ -1,51 +1,54 @@
 import math
 from parapy.core import Base, Input, Attribute, Part, Sequence
-from src.airfoil import Airfoil
-from src.blade import Blade
+from .airfoil import Airfoil
+from .blade_section import BladeSection
+from scipy.interpolate import CubicSpline
+import numpy as np
 
 
-class BasePropeller(Base):
-    """Abstract base class for all propeller types."""
-
-    @Attribute
-    def total_thrust(self):
-        raise NotImplementedError("Subclasses must implement total_thrust")
-
-    @Attribute
-    def total_torque(self):
-        raise NotImplementedError("Subclasses must implement total_torque")
-
-
-class HoverPropeller(BasePropeller):
-    """Concrete implementation for static hover using BEMT."""
-
-    diameter      = Input(0.4)
-    hub_diameter  = Input(0.04)
-    n_blades      = Input(2)
-    rpm           = Input(5000)
-    n_segments    = Input(15)
-    chord         = Input(0.03)
-    pitch         = Input(math.radians(15))
+class Propeller(Base):
+    diameter = Input()
+    rpm = Input()
+    n_blades = Input()
+    airfoil_type = Input()
     target_thrust = Input()
+    n_segments = Input(30)
 
     @Part
-    def airfoil(self):
-        return Airfoil(naca_code="4412", reynolds=300000)
+    def airfoil(self): return Airfoil(naca_code=self.airfoil_type)
 
-    @Part
-    def blades(self):
+    @Attribute
+    def splines(self):
+        """Generative Rule: Creates smooth chord and pitch distributions."""
+        r_hub, r_tip = 0.02, self.diameter / 2
+        r_ctrl = np.linspace(r_hub, r_tip, 5)
+
+        # Calculate ideal values at control points using Betz
+        vi = math.sqrt(self.target_thrust / (2.0 * 1.225 * math.pi * r_tip ** 2))
+        omega = self.rpm * 2 * math.pi / 60
+
+        c_ctrl, p_ctrl = [], []
+        for r in r_ctrl:
+            phi = math.atan2(vi, omega * r)
+            v_eff = math.sqrt(vi ** 2 + (omega * r) ** 2)
+            f_tip = (self.n_blades / 2) * (r_tip - r) / max(1e-6, r * math.sin(phi))
+            F = (2 / math.pi) * math.acos(max(0.0, min(1.0, math.exp(-f_tip))))
+
+            chord = (8 * math.pi * r * vi ** 2 * F) / (
+                        self.n_blades * v_eff ** 2 * self.airfoil.polar_data["cl_opt"] * math.cos(phi))
+            c_ctrl.append(max(0.02, chord))
+            p_ctrl.append(phi + self.airfoil.polar_data["alpha_opt_rad"])
+
+        return CubicSpline(r_ctrl, c_ctrl), CubicSpline(r_ctrl, p_ctrl)
+
+    @Part(parse=False)
+    def sections(self):
         return Sequence(
-            type=Blade,
-            quantify=self.n_blades,
-            pass_down="n_segments, chord, pitch, rpm, n_blades, target_thrust, airfoil",
-            total_radius=self.diameter / 2,
-            hub_radius=self.hub_diameter / 2,
+            type=BladeSection,
+            quantify=self.n_segments
         )
 
     @Attribute
-    def total_thrust(self):
-        return sum(blade.blade_thrust for blade in self.blades)
-
-    @Attribute
-    def total_torque(self):
-        return sum(blade.blade_torque for blade in self.blades)
+    def performance(self):
+        return {"thrust": sum(s.aerodynamics["dT"] for s in self.sections),
+                "torque": sum(s.aerodynamics["dQ"] for s in self.sections)}
