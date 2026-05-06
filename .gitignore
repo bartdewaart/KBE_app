@@ -1,0 +1,2 @@
+# Ignore XFOIL generated polar files
+polar_*.txt

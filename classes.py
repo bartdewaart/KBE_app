@@ -18,7 +18,13 @@ class Airfoil(Base):
     @Attribute
     def polar_interpolators(self):
         """Runs XFOIL via subprocess and parses the resulting polar file."""
+        # Define the unique filename
         polar_file = f"polar_{self.naca_code}_{int(self.reynolds)}.txt"
+
+        # Domain Protection: Remove old polar file if it exists [cite: 177-178]
+        if os.path.exists(polar_file):
+            os.remove(polar_file)
+            print(f"Stale data removed: {polar_file}")
 
         # XFOIL command sequence
         commands = (
@@ -41,19 +47,37 @@ class Airfoil(Base):
         )
         process.communicate(commands)
 
-        # Parsing logic to build Scipy interpolators
-        alphas, cls, cds = [], [], []
+        raw_data = []
         if os.path.exists(polar_file):
             with open(polar_file, 'r') as f:
                 for line in f:
                     parts = line.split()
-                    if len(parts) >= 3 and parts[0][0].isdigit() or parts[0][0] == '-':
-                        alphas.append(float(parts[0]))
-                        cls.append(float(parts[1]))
-                        cds.append(float(parts[2]))
+                    if len(parts) >= 3:
+                        try:
+                            # Try converting the first column to float.
+                            # If it's "alpha" or "Reynolds", this fails and skips the line.
+                            alpha = float(parts[0])
+                            cl = float(parts[1])
+                            cd = float(parts[2])
+                            raw_data.append((alpha, cl, cd))
+                        except ValueError:
+                            continue
 
+        if not raw_data:
+            raise RuntimeError(f"No data parsed from {polar_file}. Check XFOIL convergence.")
+
+        # Logic Rule: Sort and remove duplicates (common in repeated XFOIL outputs)
+        # Using a dictionary to keep only the last occurrence of each alpha
+        unique_points = {item[0]: (item[1], item[2]) for item in sorted(raw_data)}
+
+        alphas = sorted(unique_points.keys())
+        cls = [unique_points[a][0] for a in alphas]
+        cds = [unique_points[a][1] for a in alphas]
+
+        # Scipy Optimizer Integration [cite: 90, 97]
         cl_interp = interp1d(alphas, cls, kind='linear', fill_value="extrapolate")
         cd_interp = interp1d(alphas, cds, kind='linear', fill_value="extrapolate")
+
         return {"cl": cl_interp, "cd": cd_interp}
 
     def get_cl_cd(self, alpha_rad):
@@ -75,30 +99,62 @@ class BladeSection(Base):
     rpm = Input()
     air_density = Input(1.225)
     airfoil_obj = Input()
+    target_thrust = Input()
+
+    @Attribute
+    def disk_area(self):
+        return math.pi * self.total_radius**2
 
     @Attribute
     def aerodynamics(self):
         """Iteratively solves for local thrust (dT) and torque (dQ)."""
-        omega = self.rpm * 2.0 * math.pi / 60.0
-        v_ax = 0.0  # Initial axial velocity guess
-        v_rot = omega * self.radius
+        # Initial Setup [cite: 321, 325, 328-330]
+        v_i = math.sqrt(self.target_thrust / (2.0 * self.air_density * self.disk_area))
+        v_theta = 0.0
+        relaxation = 0.1
+        tolerance = 1e-5
+        n_iter = 500
 
-        # Simplified BEMT loop logic
-        v_eff = math.sqrt(v_ax ** 2 + v_rot ** 2)
-        phi = math.atan2(v_ax, v_rot)
-        alpha = self.pitch - phi
+        for i in range(n_iter):
+            # KINEMATICS
+            v_ax = v_i
+            v_rot = (self.rpm * 2 * math.pi / 60 * self.radius) - v_theta
+            v_eff = math.sqrt(v_ax ** 2 + v_rot ** 2)
+            phi = math.atan2(v_ax, v_rot)
+            alpha = self.pitch - phi
 
-        cl, cd = self.airfoil_obj.get_cl_cd(alpha)
+            # AERODYNAMICS
+            cl, cd = self.airfoil_obj.get_cl_cd(alpha)
+            l_prime = 0.5 * self.air_density * v_eff ** 2 * self.chord * cl
+            d_prime = 0.5 * self.air_density * v_eff ** 2 * self.chord * cd
 
-        # Force calculations
-        l_prime = 0.5 * self.air_density * v_eff ** 2 * self.chord * cl
-        d_prime = 0.5 * self.air_density * v_eff ** 2 * self.chord * cd
+            dT = (l_prime * math.cos(phi) - d_prime * math.sin(phi)) * self.n_blades * self.dr
+            dQ = (l_prime * math.sin(phi) + d_prime * math.cos(phi)) * self.radius * self.n_blades * self.dr
+            phi = math.atan2(v_ax, v_rot)
 
-        dT = (l_prime * math.cos(phi) - d_prime * math.sin(phi)) * self.n_blades * self.dr
-        dQ = (l_prime * math.sin(phi) + d_prime * math.cos(phi)) * self.radius * self.n_blades * self.dr
+            # Domain Protection Rule
+            sin_phi = math.sin(phi)
+            if sin_phi <= 0:
+                F = 1e-6
+            else:
+                # TIP LOSS CORRECTION
+                # F helps account for pressure leakage at the blade tips
+                f_tip = (self.n_blades / 2.0) * (self.total_radius - self.radius) / (self.radius * sin_phi)
+                F = (2.0 / math.pi) * math.acos(max(0.0, min(1.0, math.exp(-f_tip))))
+
+            # MOMENTUM UPDATE: Calculate the "new" velocities
+            v_i_new = math.sqrt(abs(dT) / (4.0 * math.pi * self.radius * self.air_density * F * self.dr))
+            v_theta_new = dQ / (4.0 * math.pi * self.radius ** 2 * self.air_density * v_i_new * F * self.dr)
+
+            # CHECK CONVERGENCE
+            if abs(v_i_new - v_i) < tolerance:
+                break
+
+            # UPDATE WITH RELAXATION
+            v_i = (1 - relaxation) * v_i + relaxation * v_i_new
+            v_theta = (1 - relaxation) * v_theta + relaxation * v_theta_new
 
         return {"dT": dT, "dQ": dQ}
-
 
 # --- 3. PROPELLER ASSEMBLY ---
 class HoverPropeller(Base):
@@ -108,6 +164,9 @@ class HoverPropeller(Base):
     n_blades = Input(2)
     rpm = Input(5000)
     n_segments = Input(15)
+    chord = Input(0.03)
+    pitch = Input(math.radians(15))
+    target_thrust = Input()
 
     @Part
     def airfoil(self):
@@ -121,11 +180,11 @@ class HoverPropeller(Base):
     def sections(self):
         return Sequence(
             type=BladeSection,
-            quantifier=self.n_segments,
+            quantify=self.n_segments,
             radius=lambda item: (self.hub_diameter / 2) + (item.index + 0.5) * self.dr,
             dr=self.dr,
-            chord=0.03,
-            pitch=math.radians(15),
+            chord=self.chord,
+            pitch=self.pitch,
             total_radius=self.diameter / 2,
             n_blades=self.n_blades,
             rpm=self.rpm,
@@ -181,3 +240,10 @@ class PropulsionSystem(Base):
             torque_req=self.propeller.total_torque,
             rpm_req=self.propeller.rpm
         )
+
+if __name__ == '__main__':
+    from parapy.gui import display
+    airfoil = Airfoil()
+    polars=airfoil.polar_interpolators
+    print(polars)
+    display(PropulsionSystem())
