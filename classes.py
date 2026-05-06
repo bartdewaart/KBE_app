@@ -80,6 +80,17 @@ class Airfoil(Base):
 
         return {"cl": cl_interp, "cd": cd_interp}
 
+    @Attribute
+    def optimal_performance(self):
+        """Identifies alpha_opt and cl_opt where L/D is maximum ."""
+        data = self.polar_interpolators
+        l_over_d = [cl / max(cd, 1e-6) for cl, cd in zip(data["cls"], data["cds"])]
+        idx = np.argmax(l_over_d)
+        return {
+            "alpha_opt": math.radians(data["alphas"][idx]),
+            "cl_opt": data["cls"][idx]
+        }
+
     def get_cl_cd(self, alpha_rad):
         """Evaluates the interpolators using radians."""
         alpha_deg = math.degrees(alpha_rad)
@@ -102,57 +113,51 @@ class BladeSection(Base):
     target_thrust = Input()
 
     @Attribute
-    def disk_area(self):
-        return math.pi * self.total_radius**2
+    def induced_velocity_ideal(self):
+        """Ideal uniform induced velocity from 1D momentum theory[cite: 28]."""
+        disk_area = math.pi * self.total_radius ** 2
+        return math.sqrt(self.target_thrust / (2.0 * self.air_density * disk_area))
+
+    @Attribute
+    def optimum_geometry(self):
+        """Generates geometry to hit ideal flow state [cite: 74-78, 114]."""
+        omega = self.rpm * 2.0 * math.pi / 60.0
+        vi = self.induced_velocity_ideal
+        v_ax = vi
+        v_rot = omega * self.radius
+        v_eff = math.sqrt(v_ax ** 2 + v_rot ** 2)
+        phi = math.atan2(v_ax, v_rot)
+
+        # Optimum Pitch Rule [cite: 75]
+        alpha_opt = self.airfoil_obj.optimal_performance["alpha_opt"]
+        pitch = phi + alpha_opt
+
+        # Prandtl Tip-Loss Factor [cite: 56-57]
+        f_tip = (self.n_blades / 2.0) * (self.total_radius - self.radius) / max(1e-6, self.radius * math.sin(phi))
+        F = (2.0 / math.pi) * math.acos(max(0.0, min(1.0, math.exp(-f_tip))))
+
+        # Optimum Chord Rule [cite: 78]
+        cl_opt = self.airfoil_obj.optimal_performance["cl_opt"]
+        chord = (8.0 * math.pi * self.radius * vi ** 2 * F) / (self.n_blades * v_eff ** 2 * cl_opt * math.cos(phi))
+
+        return {"chord": max(0.005, chord), "pitch": pitch, "phi": phi, "F": F}
 
     @Attribute
     def aerodynamics(self):
-        """Iteratively solves for local thrust (dT) and torque (dQ)."""
-        # Initial Setup [cite: 321, 325, 328-330]
-        v_i = math.sqrt(self.target_thrust / (2.0 * self.air_density * self.disk_area))
-        v_theta = 0.0
-        relaxation = 0.1
-        tolerance = 1e-5
-        n_iter = 500
+        """Calculates actual sectional forces based on generated geometry [cite: 45-48]."""
+        geom = self.optimum_geometry
+        omega = self.rpm * 2.0 * math.pi / 60.0
+        v_ax = self.induced_velocity_ideal
+        v_rot = omega * self.radius
+        v_eff = math.sqrt(v_ax ** 2 + v_rot ** 2)
 
-        for i in range(n_iter):
-            # KINEMATICS
-            v_ax = v_i
-            v_rot = (self.rpm * 2 * math.pi / 60 * self.radius) - v_theta
-            v_eff = math.sqrt(v_ax ** 2 + v_rot ** 2)
-            phi = math.atan2(v_ax, v_rot)
-            alpha = self.pitch - phi
+        cl, cd = self.airfoil_obj.get_cl_cd(self.airfoil_obj.optimal_performance["alpha_opt"])
 
-            # AERODYNAMICS
-            cl, cd = self.airfoil_obj.get_cl_cd(alpha)
-            l_prime = 0.5 * self.air_density * v_eff ** 2 * self.chord * cl
-            d_prime = 0.5 * self.air_density * v_eff ** 2 * self.chord * cd
+        l_prime = 0.5 * self.air_density * v_eff ** 2 * geom["chord"] * cl
+        d_prime = 0.5 * self.air_density * v_eff ** 2 * geom["chord"] * cd
 
-            dT = (l_prime * math.cos(phi) - d_prime * math.sin(phi)) * self.n_blades * self.dr
-            dQ = (l_prime * math.sin(phi) + d_prime * math.cos(phi)) * self.radius * self.n_blades * self.dr
-            phi = math.atan2(v_ax, v_rot)
-
-            # Domain Protection Rule
-            sin_phi = math.sin(phi)
-            if sin_phi <= 0:
-                F = 1e-6
-            else:
-                # TIP LOSS CORRECTION
-                # F helps account for pressure leakage at the blade tips
-                f_tip = (self.n_blades / 2.0) * (self.total_radius - self.radius) / (self.radius * sin_phi)
-                F = (2.0 / math.pi) * math.acos(max(0.0, min(1.0, math.exp(-f_tip))))
-
-            # MOMENTUM UPDATE: Calculate the "new" velocities
-            v_i_new = math.sqrt(abs(dT) / (4.0 * math.pi * self.radius * self.air_density * F * self.dr))
-            v_theta_new = dQ / (4.0 * math.pi * self.radius ** 2 * self.air_density * v_i_new * F * self.dr)
-
-            # CHECK CONVERGENCE
-            if abs(v_i_new - v_i) < tolerance:
-                break
-
-            # UPDATE WITH RELAXATION
-            v_i = (1 - relaxation) * v_i + relaxation * v_i_new
-            v_theta = (1 - relaxation) * v_theta + relaxation * v_theta_new
+        dT = (l_prime * math.cos(geom["phi"]) - d_prime * math.sin(geom["phi"])) * self.n_blades * self.dr
+        dQ = (l_prime * math.sin(geom["phi"]) + d_prime * math.cos(geom["phi"])) * self.radius * self.n_blades * self.dr
 
         return {"dT": dT, "dQ": dQ}
 
@@ -232,7 +237,7 @@ class PropulsionSystem(Base):
 
     @Part
     def propeller(self):
-        return HoverPropeller(rpm=5000)
+        return HoverPropeller(rpm=5000, target_thrust = self.thrust_required)
 
     @Part
     def motor(self):
