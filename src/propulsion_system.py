@@ -16,14 +16,13 @@ class PropulsionSystem(Base):
 
     # Mission inputs
     specs = Input()  # From Excel
-    #motors = Input()  # From Excel
-
     motor_db_path   = Input("data/input/motors.csv")
+    diameter = Input()
+    rpm = Input()
 
-    airfoil_candidates = (["0012", "2412", "4412"])
-                              #, "6412", "2415",)
-                          #"4415", "23012", "23015"]
-    blade_candidates = [2, 3, 4, 5, 6, 7, 8]
+    airfoil_candidates = (["0012", "2412", "4412", "6412", "2415",
+                          "4415", "23012", "23015"])
+    blade_candidates = [2, 3, 4, 5, 6, 7, 8, 9 ,10]
 
 
     @Attribute
@@ -32,26 +31,73 @@ class PropulsionSystem(Base):
 
     @Part
     def propeller(self):
-        return Propeller(target_thrust=self.thrust_required,
-                              diameter=0.3, rpm=5000)
+        return Propeller(base_thrust=self.thrust_required,
+                              diameter=self.diameter, rpm=self.rpm, thrust_to_weight = self.specs['safety_margin'])
 
     @Attribute
     def global_optimization(self):
-        """Discrete-Continuous Hybrid Optimization Loop."""
-        best_res = {"power": float('inf')}
+        """Discrete-Continuous Hybrid Optimization Loop with Variable Normalization."""
+        best_res = {"power": float('inf'), "thrust": 0.0}
+        req_t = self.thrust_required  # Calculate once to save time
 
         for af in self.airfoil_candidates:
             for nb in self.blade_candidates:
                 self.propeller.airfoil_type = af
                 self.propeller.n_blades = nb
 
-                def obj(x):
-                    self.propeller.diameter, self.propeller.rpm = x[0], x[1]
-                    return self.propeller.performance["torque"] * (x[1] * 2 * math.pi / 60)
+                print(f"\n{'=' * 60}")
+                print(f"SEARCHING: NACA {af} | Blades: {nb} | Target Thrust: {req_t:.2f} N")
+                print(f"{'-' * 60}")
 
-                res = minimize(obj, [0.3, 5000], bounds=[(0.1, self.specs['max_diameter']), (2000, 8000)])
-                if res.fun < best_res["power"]:
-                    best_res = {"power": res.fun, "D": res.x[0], "RPM": res.x[1], "AF": af, "NB": nb}
+                def obj(x_norm):
+                    self.diameter = x_norm[0] / 10.0
+                    self.rpm = x_norm[1] * 1000.0
+                    perf = self.propeller.performance
+                    p = perf["torque"] * (self.rpm * 2 * math.pi / 60)
+                    print(
+                        f"   Iter -> D: {self.diameter:.3f}m | RPM: {self.rpm:.0f} ")
+                    return p
+
+                def thrust_constraint(x_norm):
+                    """Constraint: Produced Thrust >= (Base + Rotor Weight)"""
+                    self.diameter = x_norm[0] / 10.0
+                    self.rpm = x_norm[1] * 1000.0
+
+                    # The propeller's internal target already includes its mass
+                    total_req = self.propeller.target_thrust
+                    produced = self.propeller.performance["thrust"]
+
+                    return produced - total_req
+
+                constraints = [
+                    {'type': 'ineq', 'fun': thrust_constraint}
+                ]
+
+                x0_norm = [0.3 * 10.0, 5000 / 1000.0]
+                d_max_norm = self.specs['max_diameter'] * 10.0
+                bounds_norm = [(0.5, d_max_norm), (0.50, 12.0)]
+
+                res = minimize(obj, x0_norm, method='SLSQP', bounds=bounds_norm, constraints=constraints,
+                               options={'ftol': 1e-3})
+
+                if res.success:
+                    final_d = res.x[0] / 10.0
+                    final_rpm = res.x[1] * 1000.0
+
+                    # Get final thrust for the successful run
+                    self.diameter, self.rpm = final_d, final_rpm
+                    actual_t = self.propeller.performance["thrust"]
+
+                    if res.fun < best_res["power"]:
+                        best_res = {
+                            "power": res.fun,
+                            "D": final_d,
+                            "RPM": final_rpm,
+                            "AF": af,
+                            "NB": nb,
+                            "thrust": actual_t  # Store it for the report
+                        }
+                        print(f"*** NEW GLOBAL BEST ***")
         return best_res
 
 
@@ -133,10 +179,12 @@ class PropulsionSystem(Base):
     @Attribute
     def generate_report(self):
         opt = self.global_optimization
+        self.diameter = opt['D']
+        self.rpm = opt['RPM']
         #motor = self.motor
         print(f"--- OPTIMAL UAV PROPULSION DESIGN ---\n"
               f"Airfoil: NACA {opt['AF']} | Blades: {opt['NB']}\n"
               f"Diameter: {opt['D']:.3f} m | RPM: {opt['RPM']:.0f}\n"
-              f"Power: {opt['power']:.2f} W ")
+              f"Power: {opt['power']:.2f} W | Thrust: {opt['thrust']}")
         return opt
 #
