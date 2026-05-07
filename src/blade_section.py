@@ -1,65 +1,95 @@
 import math
-from parapy.core import Base, Input, Attribute
-
+from parapy.core import Base, Input, Attribute, Part
+from parapy.geom import FittedCurve, ScaledShape, RotatedShape, TranslatedShape, Vector
+from .airfoil import Airfoil
 
 class BladeSection(Base):
     air_density = Input(1.225)
 
     @Attribute
+    def propeller_ref(self):
+        curr = self.parent
+        while curr is not None:
+            if hasattr(curr, "n_segments"):
+                return curr
+            curr = getattr(curr, "parent", None)
+        raise AttributeError("BladeSection could not find a Propeller in its parent chain.")
+
+    @Part
+    def airfoil_geom(self):
+        return Airfoil(naca_code=self.propeller_ref.airfoil_type, reynolds=300000)
+
+    @Part
+    def section_curve(self):
+        return TranslatedShape(RotatedShape(ScaledShape(
+            FittedCurve(points=self.airfoil_geom.points),
+            scale_factor=self.chord),
+            angle=self.pitch,
+            vector=Vector(0,1,0)),
+            displacement=Vector(0, 0, self.radius))
+
+    @Attribute
     def radius(self):
-        prop = self.parent
-        dr = (prop.diameter / 2 - 0.02) / prop.n_segments
+        p = self.propeller_ref
+        dr = (p.diameter / 2 - 0.02) / p.n_segments
         return 0.02 + (self.index + 0.5) * dr
 
     @Attribute
-    def dr(self):
-        prop = self.parent
-        return (prop.diameter / 2 - 0.02) / prop.n_segments
-
-    @Attribute
     def chord(self):
-        prop = self.parent
-        c_spline, _ = prop.splines
+        c_spline, _ = self.propeller_ref.splines
         return float(c_spline(self.radius))
 
     @Attribute
     def pitch(self):
-        prop = self.parent
-        _, p_spline = prop.splines
+        _, p_spline = self.propeller_ref.splines
         return float(p_spline(self.radius))
 
     @Attribute
+    def dr(self):
+        p = self.propeller_ref
+        # Calculation: (Tip Radius - Hub Radius) / Number of segments
+        return (p.diameter / 2 - 0.02) / p.n_segments
+
+    @Attribute
     def total_radius(self):
-        return self.parent.diameter / 2
+        return self.propeller_ref.diameter / 2
 
     @Attribute
     def n_blades(self):
-        return self.parent.n_blades
+        return self.propeller_ref.n_blades
 
     @Attribute
     def rpm(self):
-        return self.parent.rpm
+        return self.propeller_ref.rpm
 
     @Attribute
     def airfoil_obj(self):
-        return self.parent.airfoil
-
-
+        # This points to the airfoil defined in the Propeller class
+        return self.propeller_ref.airfoil
 
     @Attribute
     def aerodynamics(self):
-        """Calculates local thrust (dT) and torque (dQ)."""
-        omega = self.rpm * 2.0 * math.pi / 60.0
-        v_ax = math.sqrt(10.0 / (2.0 * self.air_density * math.pi * self.total_radius ** 2))  # Seed guess
+        p = self.propeller_ref  # Shortcut
+
+        omega = p.rpm * 2.0 * math.pi / 60.0
         v_rot = omega * self.radius
+
+        # Use the diameter and target_thrust from the PROPELLER level
+        r_tip = p.diameter / 2
+        v_ax = math.sqrt(p.target_thrust / (2.0 * self.air_density * math.pi * r_tip ** 2))
+
         phi = math.atan2(v_ax, v_rot)
         v_eff = math.sqrt(v_ax ** 2 + v_rot ** 2)
 
-        cl, cd = self.airfoil_obj.get_cl_cd(self.pitch - phi)
+        # Get airfoil data from the propeller's airfoil part
+        cl, cd = p.airfoil.get_cl_cd(self.pitch - phi)
+        re = (self.air_density * v_eff * self.chord) / 1.8e-5
 
         l_prime = 0.5 * self.air_density * v_eff ** 2 * self.chord * cl
         d_prime = 0.5 * self.air_density * v_eff ** 2 * self.chord * cd
 
-        dT = (l_prime * math.cos(phi) - d_prime * math.sin(phi)) * self.n_blades * self.dr
-        dQ = (l_prime * math.sin(phi) + d_prime * math.cos(phi)) * self.radius * self.n_blades * self.dr
+        # Calculate for ALL blades
+        dT = (l_prime * math.cos(phi) - d_prime * math.sin(phi)) * p.n_blades * self.dr
+        dQ = (l_prime * math.sin(phi) + d_prime * math.cos(phi)) * self.radius * p.n_blades * self.dr
         return {"dT": dT, "dQ": dQ}
+

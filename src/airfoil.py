@@ -8,7 +8,8 @@ from scipy.interpolate import interp1d
 class Airfoil(Base):
     """Handles XFOIL integration and identifies optimal operating points."""
     naca_code = Input("4412")
-    reynolds = Input(300000)
+    reynolds = Input()
+    n_points = 60
 
     @Attribute
     def polar_data(self):
@@ -56,3 +57,22 @@ class Airfoil(Base):
         data = self.polar_data
         deg = math.degrees(alpha_rad)
         return float(data["cl_interp"](deg)), float(data["cd_interp"](deg))
+
+    @Attribute
+    def points(self):
+        """Generates NACA 4-digit coordinates for the FittedCurve."""
+        # Simplified NACA 4-digit generator for geometry purposes
+        m = int(self.naca_code[0]) / 100.0
+        p = int(self.naca_code[1]) / 10.0
+        t = int(self.naca_code[2:]) / 100.0
+
+        x = np.linspace(0, 1, self.n_points)
+        yt = 5 * t * (0.2969 * np.sqrt(x) - 0.1260 * x - 0.3516 * x ** 2 + 0.2843 * x ** 3 - 0.1015 * x ** 4)
+
+        xcam = np.where(x < p, m / p ** 2 * (2 * p * x - x ** 2), m / (1 - p) ** 2 * ((1 - 2 * p) + 2 * p * x - x ** 2))
+
+        # Upper and Lower points
+        pts_upper = [[xi, yi + yti, 0] for xi, yi, yti in zip(x, xcam, yt)]
+        pts_lower = [[xi, yi - yti, 0] for xi, yi, yti in zip(x, xcam, yt)]
+
+        return pts_upper[::-1] + pts_lower[1:]  # Counter-clockwise loop
