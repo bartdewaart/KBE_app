@@ -17,7 +17,7 @@ class BladeSection(Base):
 
     @Part
     def airfoil_geom(self):
-        return Airfoil(naca_code=self.propeller_ref.airfoil_type, reynolds=300000)
+        return Airfoil(naca_code=self.propeller_ref.airfoil_type, reynolds=300000, chord = self.chord)
 
     @Part
     def section_curve(self):

@@ -103,3 +103,7 @@ class Propeller(Base):
     #                     shape_in=self.blade_geom.surface,
     #                     angle=lambda item: item.index * (2 * math.pi / self.n_blades),
     #                     vector=Vector(0, 0, 1))
+
+
+
+

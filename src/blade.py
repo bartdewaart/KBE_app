@@ -13,4 +13,4 @@ class Blade(Base):
     @Part
     def surface(self):
         """Creates the 3D skin over all section curves."""
-        return LoftedSurface(profiles=[s.section_curve for s in self.sections])
+        return LoftedSurface(profiles=[s.section_curve for s in self.sections], color="LightBlue")

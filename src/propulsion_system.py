@@ -20,8 +20,9 @@ class PropulsionSystem(Base):
     diameter = Input()
     rpm = Input()
 
-    airfoil_candidates = (["0012", "2412", "4412", "6412", "2415",
-                          "4415", "23012", "23015"])
+    airfoil_candidates = (["0012", "2412"])
+                           ## , "4412", "6412", "2415",
+                          ##"4415", "23012", "23015"])
     blade_candidates = [2, 3, 4, 5, 6, 7, 8, 9 ,10]
 
 
@@ -98,6 +99,14 @@ class PropulsionSystem(Base):
                             "thrust": actual_t  # Store it for the report
                         }
                         print(f"*** NEW GLOBAL BEST ***")
+
+        # Set the propeller to the OPTIMAL design for display
+        if best_res["power"] != float('inf'):
+            self.diameter = best_res['D']
+            self.rpm = best_res['RPM']
+            self.propeller.airfoil_type = best_res['AF']
+            self.propeller.n_blades = best_res['NB']
+
         return best_res
 
 

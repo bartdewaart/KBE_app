@@ -1,15 +1,16 @@
 import math
 from parapy.core import Base, Input, Attribute
+from parapy.geom import FittedCurve
 import os
 import subprocess
 import numpy as np
 from scipy.interpolate import interp1d
 
-class Airfoil(Base):
+class Airfoil(FittedCurve):
     """Handles XFOIL integration and identifies optimal operating points."""
     naca_code = Input("4412")
     reynolds = Input()
-    n_points = 60
+    chord = Input()
 
     @Attribute
     def polar_data(self):
@@ -59,20 +60,20 @@ class Airfoil(Base):
         return float(data["cl_interp"](deg)), float(data["cd_interp"](deg))
 
     @Attribute
-    def points(self):
-        """Generates NACA 4-digit coordinates for the FittedCurve."""
-        # Simplified NACA 4-digit generator for geometry purposes
-        m = int(self.naca_code[0]) / 100.0
-        p = int(self.naca_code[1]) / 10.0
-        t = int(self.naca_code[2:]) / 100.0
-
-        x = np.linspace(0, 1, self.n_points)
-        yt = 5 * t * (0.2969 * np.sqrt(x) - 0.1260 * x - 0.3516 * x ** 2 + 0.2843 * x ** 3 - 0.1015 * x ** 4)
-
-        xcam = np.where(x < p, m / p ** 2 * (2 * p * x - x ** 2), m / (1 - p) ** 2 * ((1 - 2 * p) + 2 * p * x - x ** 2))
-
-        # Upper and Lower points
-        pts_upper = [[xi, yi + yti, 0] for xi, yi, yti in zip(x, xcam, yt)]
-        pts_lower = [[xi, yi - yti, 0] for xi, yi, yti in zip(x, xcam, yt)]
-
-        return pts_upper[::-1] + pts_lower[1:]  # Counter-clockwise loop
+    def points(self):  # required slot for FittedCurve superclass
+        airfoil_name = str('naca' + self.naca_code)
+        if airfoil_name.endswith('.dat'):  # check whether the airfoil name string includes .dat already
+            airfoil_file = airfoil_name
+        else:
+            airfoil_file = airfoil_name + '.dat'
+        file_path = os.path.join("data", "airfoil_library", airfoil_file)
+        with open(file_path, 'r') as f:
+            point_lst = []
+            next(f)
+            for line in f:
+                x, z = line.split(' ', 1)  # the cartesian coordinates are directly interpreted as X and Z coordinates
+                point_lst.append(self.position.translate(
+                    "x", float(x) * self.chord,  # the x points are scaled according to the airfoil chord length
+                    "z", float(
+                        z) * self.chord))  # y points are scaled
+        return point_lst
