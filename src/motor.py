@@ -1,4 +1,5 @@
 import math
+
 from parapy.core import Base, Input, Attribute
 
 
@@ -6,52 +7,89 @@ class ElectricMotor(Base):
     """
     Represents a candidate electric motor and evaluates
     whether it can handle the propeller's power requirements.
+    Motor specifications are read from the motor database CSV
+    and operating requirements are passed from PropulsionSystem.
     """
 
-    # Motor specifications (from database)
-    kv            = Input(900)      # RPM/V
-    max_power     = Input(500.0)    # W
-    max_current   = Input(30.0)     # A
-    resistance    = Input(40)       # mOhm
-    mass          = Input(20)       # g
+    #: optional input slot — motor velocity constant [RPM/V]
+    kv          = Input(900)
 
-    # Operating requirements (passed from PropulsionSystem)
-    rpm_req       = Input()         # required RPM
-    torque_req    = Input()         # required torque in Nm
+    #: optional input slot — maximum rated power [W]
+    max_power   = Input(500.0)
+
+    #: optional input slot — maximum rated current [A]
+    max_current = Input(30.0)
+
+    #: optional input slot — winding resistance [mOhm]
+    resistance  = Input(40)
+
+    #: optional input slot — motor mass [g]
+    mass        = Input(20)
+
+    #: required input slot — required rotational speed [RPM]
+    rpm_req     = Input()
+
+    #: required input slot — required shaft torque [Nm]
+    torque_req  = Input()
 
     @Attribute
     def kt(self):
-        """Torque constant, inverse of KV in SI units"""
+        """
+        Mathematical Rule: torque constant [Nm/A].
+        Derived from KV rating — inverse of KV in SI units.
+        """
+        if self.kv <= 0:
+            raise ValueError(
+                f"Motor KV={self.kv} is invalid. KV must be positive. "
+                f"Check motor database entry."
+            )
         return 1.0 / (self.kv * 2 * math.pi / 60)
 
     @Attribute
     def voltage_required(self):
-        """Voltage needed to reach the required RPM"""
+        """
+        Mathematical Rule: voltage needed to reach the required RPM [V].
+        """
         return self.rpm_req / self.kv
 
     @Attribute
     def current_required(self):
-        """Current draw estimated from torque constant"""
+        """
+        Mathematical Rule: current draw estimated from torque constant [A].
+        """
         return self.torque_req / self.kt
 
     @Attribute
     def power_required(self):
-        """Electrical power draw"""
+        """
+        Mathematical Rule: total electrical power draw [W].
+        """
         return self.current_required * self.voltage_required
 
     @Attribute
     def efficiency(self):
-        """Motor efficiency, shaft power out / electrical power in"""
+        """
+        Mathematical Rule: motor efficiency [-].
+        Ratio of shaft power output to electrical power input.
+        """
         shaft_power = self.torque_req * (self.rpm_req * 2 * math.pi / 60)
         if self.power_required > 0:
-            return shaft_power / self.power_required
+            eta = shaft_power / self.power_required
+            if eta > 1.0:
+                print(
+                    f"WARNING: Motor efficiency > 100% ({eta:.2%}). "
+                    f"This indicates torque_req or rpm_req may be incorrect. "
+                    f"Check propeller total_torque output."
+                )
+            return eta
         return 0.0
 
     @Attribute
     def is_feasible(self):
         """
-        Logic Rule: checks all three feasibility constraints.
-        Operating at max 80% of rated limits for safety margin
+        Logic Rule: checks feasibility against rated motor limits.
+        Operating margins set to 80% of rated current and power
+        to account for thermal effects and modelling uncertainties.
         """
         current_ok = self.current_required <= 0.8 * self.max_current
         power_ok   = self.power_required   <= 0.8 * self.max_power
@@ -59,11 +97,15 @@ class ElectricMotor(Base):
 
     @Attribute
     def feasibility_report(self):
-        """Returns a readable summary of which constraints pass or fail"""
+        """
+        Logic Rule: returns a detailed feasibility summary showing
+        which constraints pass or fail and by what margin.
+        References is_feasible to avoid duplicating logic.
+        """
         return {
-            "current_ok" : self.current_required <= 0.8 * self.max_current,
-            "power_ok"   : self.power_required   <= 0.8 * self.max_power,
-            "is_feasible": self.is_feasible,
-            "current_margin": 0.8 * self.max_current - self.current_required,
-            "power_margin"  : 0.8 * self.max_power   - self.power_required,
+            "is_feasible"    : self.is_feasible,
+            "current_ok"     : self.current_required <= 0.8 * self.max_current,
+            "power_ok"       : self.power_required   <= 0.8 * self.max_power,
+            "current_margin" : 0.8 * self.max_current - self.current_required,
+            "power_margin"   : 0.8 * self.max_power   - self.power_required,
         }

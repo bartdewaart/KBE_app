@@ -1,16 +1,99 @@
-from parapy.core import Base, Input, Part, Sequence
-from parapy.geom import LoftedSurface
+import math
+
+from parapy.core import Base, Input, Attribute, Part, Sequence
+from parapy.geom import LoftedSurface, RotatedShape, Vector
+
 from .blade_section import BladeSection
 
 
 class Blade(Base):
-    n_segments = Input()
+    """
+    Represents a single physical blade.
+    Owns the spanwise sequence of BladeSection objects and lofts
+    them into a 3D surface. Also aggregates per-blade aerodynamic
+    performance from its sections.
+
+    Each blade instance is rotated by rotation_angle around the
+    hub axis (Z-axis) to produce the full rotor assembly.
+    rotation_angle is computed and passed by Propeller as:
+    index * (2π / n_blades)
+    """
+
+    #: required input slot — rotation angle around hub Z-axis [rad]
+    #: computed and passed by Propeller: index * (2π / n_blades)
+    rotation_angle = Input()
+
+    #: optional input slot — number of spanwise analysis sections
+    n_segments = Input(30)
 
     @Part
     def sections(self):
-        return Sequence(type=BladeSection, quantify=self.n_segments)
+        """
+        Configuration Rule: instantiates n_segments BladeSection
+        objects spanning from hub to tip. Chord, pitch and radius
+        are computed internally by each section via propeller_ref.
+        """
+        return Sequence(
+            type=BladeSection,
+            quantify=self.n_segments
+        )
+
+    @Attribute
+    def blade_thrust(self):
+        """
+        Mathematical Rule: total thrust contribution of this blade [N].
+        Aggregates dT from all spanwise sections.
+        """
+        thrust = sum(s.aerodynamics["dT"] for s in self.sections)
+        if thrust < 0:
+            print(
+                f"WARNING: Blade thrust is negative ({thrust:.3f} N). "
+                f"This usually means pitch angles are inverted or RPM is too low. "
+                f"Check propeller spline pitch distribution."
+            )
+        return thrust
+
+    @Attribute
+    def blade_torque(self):
+        """
+        Mathematical Rule: total torque contribution of this blade [Nm].
+        Aggregates dQ from all spanwise sections.
+        """
+        torque = sum(s.aerodynamics["dQ"] for s in self.sections)
+        if torque < 0:
+            print(
+                f"WARNING: Blade torque is negative ({torque:.3f} Nm). "
+                f"This usually means pitch angles are inverted or RPM is too low. "
+                f"Check propeller spline pitch distribution."
+            )
+        return torque
 
     @Part
     def surface(self):
-        """Creates the 3D skin over all section curves."""
-        return LoftedSurface(profiles=[s.section_curve for s in self.sections])
+        """
+        Geometry Rule: lofts the section curves into a 3D blade skin.
+        NOTE: all sections must have the same number of points in their
+        FittedCurve for LoftedSurface to work correctly.
+        """
+        if len(self.sections) < 2:
+            raise ValueError(
+                f"LoftedSurface requires at least 2 sections to loft. "
+                f"Got n_segments={self.n_segments}. "
+                f"Increase n_segments to at least 2."
+            )
+        return LoftedSurface(
+            profiles=[s.section_curve for s in self.sections]
+        )
+
+    @Part
+    def rotated_surface(self):
+        """
+        Geometry Rule: rotates the lofted blade surface by rotation_angle
+        around the Z-axis (hub axis) to position this blade in the
+        full rotor assembly.
+        """
+        return RotatedShape(
+            shape_in=self.surface,
+            vector=Vector(0, 0, 1),
+            angle=self.rotation_angle
+        )
