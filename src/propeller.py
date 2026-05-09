@@ -119,6 +119,9 @@ class Propeller(Base):
                      * (r_tip - r) / max(1e-6, r * math.sin(phi)))
             F     = ((2 / math.pi)
                      * math.acos(max(0.0, min(1.0, math.exp(-f_tip)))))
+            # Enforce minimum tip-loss correction to avoid chord collapse
+            # When f_tip is very small, F approaches 0 which zeros out chord
+            F = max(0.4, F)
 
             # Optimum Chord Generation
             chord = ((8 * math.pi * r * vi ** 2 * F)

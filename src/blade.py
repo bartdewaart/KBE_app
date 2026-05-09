@@ -68,7 +68,7 @@ class Blade(Base):
             )
         return torque
 
-    @Part
+    @Part(parse=False)
     def surface(self):
         """
         Geometry Rule: lofts the section curves into a 3D blade skin.

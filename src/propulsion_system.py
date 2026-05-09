@@ -49,6 +49,12 @@ class PropulsionSystem(Base):
         return ((self.specs['MTOW'] * 9.81 / self.specs['n_rotors'])
                 * self.specs['safety_margin'])
 
+    #: optional input slot — current airfoil type during optimization
+    airfoil_type = Input("0012")
+
+    #: optional input slot — current blade count during optimization
+    n_blades = Input(2)
+
     @Part
     def propeller(self):
         """
@@ -59,9 +65,32 @@ class PropulsionSystem(Base):
             base_thrust   = self.thrust_required,
             diameter      = self.diameter,
             rpm           = self.rpm,
-            safety_margin = self.specs['safety_margin']
+            safety_margin = self.specs['safety_margin'],
+            airfoil_type  = self.airfoil_type,
+            n_blades      = self.n_blades
         )
 
+
+    def _invalidate_propeller_cache(self):
+        """
+        Forces ParaPy to recalculate propeller geometry by invalidating
+        cached attributes after airfoil_type or n_blades changes.
+        This is necessary because changing discrete variables (airfoil, blade count)
+        invalidates dependent aerospace calculations (splines, airfoil polars, etc.)
+        but ParaPy caches them aggressively.
+        """
+        try:
+            # Completely invalidate the propeller Part to force recreating all children
+            self.propeller.invalidate()
+        except Exception:
+            pass
+
+        try:
+            # Also try to delete the propeller Part cache if it exists
+            if hasattr(self, '_propeller'):
+                del self._propeller
+        except Exception:
+            pass
 
     def run_optimization(self):
         """
@@ -84,8 +113,11 @@ class PropulsionSystem(Base):
 
         for af in self.airfoil_candidates:
             for nb in self.blade_candidates:
-                self.propeller.airfoil_type = af
-                self.propeller.n_blades = nb
+                self.airfoil_type = af
+                self.n_blades = nb
+
+                # Invalidate cache after changing airfoil or blade count
+                self._invalidate_propeller_cache()
 
                 print(f"\n{'=' * 60}")
                 print(f"SEARCHING: NACA {af} | Blades: {nb} "
@@ -96,7 +128,8 @@ class PropulsionSystem(Base):
                     """Objective: minimise shaft power."""
                     self.diameter = x_norm[0] / 10.0
                     self.rpm = x_norm[1] * 1000.0
-                    p = self.propeller.performance["shaft_power"]
+                    perf = self._compute_lightweight_performance()
+                    p = perf["shaft_power"]
                     print(f"   Iter -> D: {self.diameter:.3f}m "
                           f"| RPM: {self.rpm:.0f}")
                     return p
@@ -108,8 +141,14 @@ class PropulsionSystem(Base):
                     """
                     self.diameter = x_norm[0] / 10.0
                     self.rpm = x_norm[1] * 1000.0
-                    total_req = self.propeller.target_thrust
-                    produced = self.propeller.performance["thrust"]
+                    # Compute target thrust without triggering mass calculation
+                    # target_thrust = base_thrust + mass * 9.81 * safety_margin
+                    # Use estimated mass for lightweight calculation
+                    estimated_mass = 0.5  # kg, rough estimate for propeller
+                    total_req = (self.propeller.base_thrust +
+                                 estimated_mass * 9.81 * self.propeller.safety_margin)
+                    perf = self._compute_lightweight_performance()
+                    produced = perf["thrust"]
                     return produced - total_req
 
                 constraints = [{'type': 'ineq', 'fun': thrust_constraint}]
@@ -130,7 +169,8 @@ class PropulsionSystem(Base):
                     final_rpm = res.x[1] * 1000.0
 
                     self.diameter, self.rpm = final_d, final_rpm
-                    actual_t = self.propeller.performance["thrust"]
+                    perf = self._compute_lightweight_performance()
+                    actual_t = perf["thrust"]
 
                     if res.fun < best_res["power"]:
                         best_res = {
@@ -156,8 +196,11 @@ class PropulsionSystem(Base):
         # optimizer iteration
         self.diameter = best_res["D"]
         self.rpm = best_res["RPM"]
-        self.propeller.airfoil_type = best_res["AF"]
-        self.propeller.n_blades = best_res["NB"]
+        self.airfoil_type = best_res["AF"]
+        self.n_blades = best_res["NB"]
+
+        # Force propeller to recalculate with final values
+        self._invalidate_propeller_cache()
 
         print(
             f"\n{'=' * 60}\n"
@@ -272,9 +315,19 @@ class PropulsionSystem(Base):
         """
         Prints a summary of the optimal propulsion design.
         Called explicitly from main.py after optimization completes.
+        Assumes run_optimization() has already been called.
         Implemented as a regular method to avoid @Attribute side effects.
         """
-        opt = self.run_optimization()
+        # Get current optimized values (assumes run_optimization was called first)
+        perf = self.propeller.performance
+        opt = {
+            "AF": self.airfoil_type,
+            "NB": self.n_blades,
+            "D": self.diameter,
+            "RPM": self.rpm,
+            "power": perf["shaft_power"],
+            "thrust": perf["thrust"]
+        }
         print(
             f"--- OPTIMAL UAV PROPULSION DESIGN ---\n"
             f"Airfoil: NACA {opt['AF']} | Blades: {opt['NB']}\n"
@@ -282,3 +335,81 @@ class PropulsionSystem(Base):
             f"Power: {opt['power']:.2f} W | Thrust: {opt['thrust']:.2f} N"
         )
         return opt
+
+    def _compute_lightweight_performance(self):
+        """
+        Computes rotor thrust and power WITHOUT creating ParaPy blade Parts.
+        Uses BladeSection calculations directly to avoid triggering Sequence caching.
+        Returns dict with 'thrust', 'torque', 'shaft_power'.
+        """
+        from .blade_section import BladeSection
+        import math
+        import numpy as np
+
+        try:
+            # Recreate sections on-the-fly without via ParaPy Parts
+            prop = self.propeller
+            n_seg = prop.n_segments
+
+            total_thrust = 0.0
+            total_torque = 0.0
+
+            # Manually compute section aerodynamics
+            for i in range(n_seg):
+                # Create section just for computation, not as a ParaPy Part
+                section_data = {
+                    'index': i,
+                    'parent': prop,
+                    'n_segments': n_seg
+                }
+
+                # Approximate radius and dr
+                dr_approx = (prop.diameter / 2 - 0.02) / n_seg
+                r_approx = 0.02 + (i + 0.5) * dr_approx
+
+                # Approximate chord from splines (without creating a Section Part)
+                c_spline, p_spline = prop.splines
+                chord_approx = float(c_spline(r_approx))
+                pitch_approx = float(p_spline(r_approx))
+
+                # Compute section performance
+                omega = prop.rpm * 2 * math.pi / 60
+                air_density = 1.225
+                v_rot = omega * r_approx
+                r_tip = prop.diameter / 2
+                # Use design_thrust (estimated mass) to avoid triggering blade Part creation
+                v_ax = math.sqrt(
+                    prop.design_thrust / (2.0 * air_density * math.pi * r_tip ** 2)
+                )
+
+                phi = math.atan2(v_ax, v_rot)
+                v_eff = math.sqrt(v_ax ** 2 + v_rot ** 2)
+
+                # Get airfoil Cl/Cd
+                cl, cd = prop.airfoil.get_cl_cd(pitch_approx - phi)
+
+                # Compute section loads
+                l_prime = 0.5 * air_density * v_eff ** 2 * chord_approx * cl
+                d_prime = 0.5 * air_density * v_eff ** 2 * chord_approx * cd
+
+                # Per-section contribution (times n_blades internally)
+                dT = (l_prime * math.cos(phi) - d_prime * math.sin(phi)) * prop.n_blades * dr_approx
+                dQ = (l_prime * math.sin(phi) + d_prime * math.cos(phi)) * r_approx * prop.n_blades * dr_approx
+
+                total_thrust += dT
+                total_torque += dQ
+
+            omega = prop.rpm * 2 * math.pi / 60
+            shaft_power = total_torque * omega
+
+            return {
+                "thrust": total_thrust,
+                "torque": total_torque,
+                "shaft_power": shaft_power
+            }
+        except Exception as e:
+            # Fallback to using ParaPy Parts if lightweight calculation fails
+            print(f"Lightweight performance calculation failed: {e}")
+            return self.propeller.performance
+
+
