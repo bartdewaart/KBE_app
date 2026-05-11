@@ -1,0 +1,27 @@
+﻿Category;Motor;Size;KV (RPM/V);Voltage (LiPo);Max Power (W);Max Current (A);Weight (g);Internal resistance;dimensions (D*h) [mm];URL;af (ja/nee)
+Micro;BETAFPV 0802SE 19500KV;802;19500;1S;20;5;1.83;;10.5x8.8;https://betafpv.com/collections/0802-motors/products/0802se-22000kv-brushless-motors;nee
+Micro;Happymodel SE0802 16000KV;802;16000;1S;20;5;1.7;;10.5x10;https://www.happymodel.cn/index.php/2020/03/06/se0802-brushless-motor/;nee
+Micro;iFlight XING 1404 4150KV;1404;4150;4S;200.8;12.03;8;188 mOhm;17.7x12.5;https://iflight-rc.eu/nl-nl/products/xing-1404-4150kv-defender-25?_pos=2&_fid=5c7268cda&_ss=c;ja
+Micro;iFlight XING 1504 3100KV;1504;3100;3–6S;207;12.44;12.3;247 mOhm;21.6x13.45;https://iflight-rc.eu/nl-nl/products/xing-1504-3100kv-motor?_pos=1&_fid=5c7268ce8&_ss=c;ja
+Micro;EMAX RS1106 6000KV;1106;6000;2S;~120;~10;6.5;;14.2x14.5;https://emaxmodel.com/products/rs1106-brushless-motor;nee
+Micro;BrotherHobby 1407 3600KV;1407;3600;3–4S;~250;~18;15.1;;18.2x11.6;https://www.brotherhobbystore.com/products/tornado-t2-1407-motor-cw;
+FPV;iFlight XING2 1404 3800KV;1404;3800;4S;238.3;14.33;9.2;256 mOhm;18.63x13.7;https://www.drone-fpv-racer.com/en/iflight-xing2-unibell-1404-3800kv-motor-7619.html;
+Micro;Happymodel EX1103 8000KV;1103;8000;2–3S (11.1 V);~100;~8;3.7;;13.5x10;https://www.happymodel.cn/index.php/2019/06/04/happymodel-ex1103-kv6000-8000-12000-2-4s-brushless-motor/;
+;;;;;;;;;;;
+FPV;T-Motor F60 Pro V 2207 1950KV;2207;1950;4–6S;949;42;33.8;60 mOhm;26.8x20.4;https://www.aliexpress.us/item/3256805747977536.html?gatewayAdapt=nld2usa4itemAdapt#nav-specification;
+FPV;T-Motor F60 Pro V 2207 2550KV;2207;2550;4S;602;41;33.8;43 mOhm;26.8x20.4;https://www.aliexpress.us/item/3256805747977536.html?gatewayAdapt=nld2usa4itemAdapt#nav-specification;
+FPV;EMAX ECO II 2306 2400KV;2306;2400;4–6S;740;44;30.2;47 mOhm;28x18.6;https://emaxmodel.com/collections/ecoii-series/products/emax-eco-ii-series-2306-1700kv-1900kv-2400kv-brushless-motor-for-rc-drone-fpv-racing?variant=36534585852062;
+FPV;BrotherHobby Avenger 2306 2450KV;2306;2450;5S;1048.73;52.7;33.6;45.02 mOhm;28x18.3;https://www.brotherhobbystore.com/avenger-23065-v3-motorcw-p0114.html;
+FPV;RCINPOWER GTS V2 2207 1960KV;2207;1960;5-6S;1200 (5S);50.2 (5S);29.9;58 mOhm;27.3x17.9;https://www.aliexpress.com/i/3256804917885521.html?gatewayAdapt=nld2glo4itemAdapt#nav-specification;
+FPV;EMAX RSII 2306 2400KV;2306;2400;3-4S;950;~38;26.6;;;https://emaxmodel.com/products/rsii-series-2306-brushless-motor;nee
+FPV;iFlight XING2 2207 1855KV;2207;1855;3-6S;841.9;35.08;31.6;50 mOhm;29.08x19.1;https://iflight-rc.eu/en/products/xing2-2207-1855kv-fpv-motor;
+FPV;T-Motor Velox V2207 1950KV;2207;1950;5-6S;1003;45.8;31.4;50 mOhm;27.5x19.35;https://tmotorhobby.com/goods-984-T-Motor+VELOX+V2+V2207+1750KV1950KV2550KV+Fpv+Motor.html;
+;;;;;;;;;;;
+Medium UAV;SunnySky X3530 650KV;3530;650;5–6S;2310;110;305;11.3 mOhm;42.5x50;https://www.hobbydrone.cz/motor-sunnysky-v3-x3530-650kv/?srsltid=AfmBOopAQcVmx8V79DW7VZPtJDA3e1ozqx29H5fdcgL7kJmLcFbQWYc8;
+Medium UAV;SunnySky X3525 880KV;3525;880;4–6S;1300;77;253;10 mOhm;42.5x50;https://sunnyskyusa.com/products/sunnysky-x3525-brushless-motors-520kv-880kv?variant=45197935951;
+Medium UAV;SunnySky V5210 340KV;5210;340;6–12S;~1500;~60;~320;;;https://sunnyskyusa.com/products/v5210-brushless-motor;
+Medium UAV;SunnySky M4526R 525KV;4526;525;6–8S;~1200;~50;~250;;;https://sunnyskyusa.com/products/m4526r-brushless-motor;
+Medium UAV;T-Motor MN3510 630KV;3510;630;4–6S;~900;~35;~110;;;https://store.tmotor.com/product/mn3510-motor.html;
+Medium UAV;T-Motor MN4012 400KV;4012;400;6S;~1200;~45;~180;;;https://store.tmotor.com/product/mn4012-motor.html;
+Medium UAV;SunnySky X4108 480KV;4108;480;4–6S;~900;~35;~150;;;https://sunnyskyusa.com/products/x4108-brushless-motor;
+Medium UAV;T-Motor MN3110 700KV;3110;700;4–6S;~700;~28;~95;;;https://store.tmotor.com/product/mn3110-motor.html;
