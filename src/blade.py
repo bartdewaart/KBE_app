@@ -3,7 +3,7 @@ import math
 from parapy.core import Base, Input, Attribute, Part, Sequence
 from parapy.geom import LoftedSurface, RotatedShape, Vector
 
-from .blade_section import BladeSection
+from src.blade_section import BladeSection
 
 
 class Blade(Base):

@@ -93,7 +93,7 @@ class BladeSection(Base):
     @Attribute
     def target_thrust(self):
         """Mathematical Rule: thrust requirement from parent propeller [N]."""
-        return self.propeller_ref.target_thrust
+        return self.propeller_ref.design_thrust
 
     @Attribute
     def aerodynamics(self):

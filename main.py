@@ -1,8 +1,7 @@
 import os
-
+import csv
 import pandas as pd
 from parapy.gui import display
-
 from src.propulsion_system import PropulsionSystem
 
 
@@ -17,16 +16,24 @@ def load_inputs(file_path):
     if not os.path.exists(file_path):
         raise FileNotFoundError(
             f"Mission input file not found at '{file_path}'. "
-            f"Expected location: data/input/mission.xlsx. "
-            f"Check that the file exists relative to the project root."
+            f"Expected location: data/input/mission.csv"
         )
-    return pd.read_excel(file_path).set_index('Parameter')['Value']
+    specs = {}
+    with open(file_path, newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            # Convert numeric values to float, keep strings as-is
+            try:
+                specs[row["Parameter"]] = float(row["Value"])
+            except ValueError:
+                specs[row["Parameter"]] = row["Value"]
+    return specs
 
 
 if __name__ == '__main__':
 
     # Step 1: load mission specifications from Excel
-    inputs = load_inputs("./data/input/mission.xlsx")
+    inputs = load_inputs("./data/input/mission.csv")
 
     # Step 2: instantiate the root PropulsionSystem object
     app = PropulsionSystem(specs=inputs)
