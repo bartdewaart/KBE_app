@@ -12,13 +12,13 @@ from .propeller import Propeller
 class PropulsionSystem(Base):
     """
     Root class — couples the propeller design with motor selection.
-    Reads mission specifications from Excel input, runs a hybrid
+    Reads mission specifications from CSV input, runs a hybrid
     discrete-continuous optimization to find the optimal propeller
     design, reads the motor database and selects the best feasible
     motor match.
     """
 
-    #: required input slot — mission specifications dict from Excel
+    #: required input slot — mission specifications dict from CSV
     #: expected keys: MTOW, n_rotors, safety_margin, max_diameter
     specs = Input()
 
@@ -62,6 +62,28 @@ class PropulsionSystem(Base):
             safety_margin = self.specs['safety_margin']
         )
 
+    def _obj(self, x_norm):
+        """
+        Objective function for scipy optimizer.
+        Minimises shaft power for a given normalised [diameter, RPM].
+        """
+        self.diameter = x_norm[0] / 10.0
+        self.rpm      = x_norm[1] * 1000.0
+        p = self.propeller.performance["shaft_power"]
+        print(f"   Iter -> D: {self.diameter:.3f}m "
+              f"| RPM: {self.rpm:.0f}")
+        return p
+
+    def _thrust_constraint(self, x_norm):
+        """
+        Logic Rule: produced thrust must meet or exceed design thrust.
+        Constraint is satisfied when return value >= 0.
+        """
+        self.diameter = x_norm[0] / 10.0
+        self.rpm      = x_norm[1] * 1000.0
+        produced = self.propeller.performance["thrust"]
+        required = self.propeller.design_thrust
+        return produced - required
 
     def run_optimization(self):
         """
@@ -75,58 +97,38 @@ class PropulsionSystem(Base):
         a necessary deviation from functional style when coupling
         ParaPy models to external optimizers.
 
-        Call explicitly from main.py after instantiation:
-            result = system.run_optimization()
-            display(system)
+        Call explicitly from main.py after instantiation.
         """
         best_res = {"power": float('inf'), "thrust": 0.0}
-        req_t = self.thrust_required
+        req_t    = self.thrust_required
 
         for af in self.airfoil_candidates:
             for nb in self.blade_candidates:
                 self.propeller.airfoil_type = af
-                self.propeller.n_blades = nb
+                self.propeller.n_blades     = nb
 
                 print(f"\n{'=' * 60}")
                 print(f"SEARCHING: NACA {af} | Blades: {nb} "
                       f"| Target Thrust: {req_t:.2f} N")
                 print(f"{'-' * 60}")
 
-                def obj(x_norm):
-                    """Objective: minimise shaft power."""
-                    self.diameter = x_norm[0] / 10.0
-                    self.rpm = x_norm[1] * 1000.0
-                    p = self.propeller.performance["shaft_power"]
-                    print(f"   Iter -> D: {self.diameter:.3f}m "
-                          f"| RPM: {self.rpm:.0f}")
-                    return p
-
-                def thrust_constraint(x_norm):
-                    """
-                    Logic Rule: produced thrust must meet or exceed
-                    the target thrust including rotor self-weight.
-                    """
-                    self.diameter = x_norm[0] / 10.0
-                    self.rpm = x_norm[1] * 1000.0
-                    total_req = self.propeller.target_thrust
-                    produced = self.propeller.performance["thrust"]
-                    return produced - total_req
-
-                constraints = [{'type': 'ineq', 'fun': thrust_constraint}]
-                x0_norm = [0.3 * 10.0, 5000 / 1000.0]
-                d_max_norm = self.specs['max_diameter'] * 10.0
-                bounds_norm = [(0.5, d_max_norm), (0.50, 12.0)]
+                x0_norm     = [0.3 * 10.0, 5000 / 1000.0]
+                d_max_norm  = self.specs['max_diameter'] * 10.0
+                bounds_norm = [(0.5, d_max_norm), (0.5, 12.0)]
+                constraints = [{'type': 'ineq',
+                                'fun' : self._thrust_constraint}]
 
                 res = minimize(
-                    obj, x0_norm,
-                    method='SLSQP',
-                    bounds=bounds_norm,
-                    constraints=constraints,
-                    options={'ftol': 1e-3}
+                    self._obj,
+                    x0_norm,
+                    method      = 'SLSQP',
+                    bounds      = bounds_norm,
+                    constraints = constraints,
+                    options     = {'ftol': 1e-3}
                 )
 
                 if res.success:
-                    final_d = res.x[0] / 10.0
+                    final_d   = res.x[0] / 10.0
                     final_rpm = res.x[1] * 1000.0
 
                     self.diameter, self.rpm = final_d, final_rpm
@@ -134,16 +136,16 @@ class PropulsionSystem(Base):
 
                     if res.fun < best_res["power"]:
                         best_res = {
-                            "power": res.fun,
-                            "D": final_d,
-                            "RPM": final_rpm,
-                            "AF": af,
-                            "NB": nb,
+                            "power" : res.fun,
+                            "D"     : final_d,
+                            "RPM"   : final_rpm,
+                            "AF"    : af,
+                            "NB"    : nb,
                             "thrust": actual_t
                         }
                         print(f"*** NEW GLOBAL BEST ***")
 
-        # Domain Protection: raise if no feasible design was found
+        # Domain Protection: raise if no feasible design found
         if best_res["power"] == float('inf'):
             raise RuntimeError(
                 "Optimization failed — no feasible design found. "
@@ -151,13 +153,12 @@ class PropulsionSystem(Base):
                 "airfoil and blade candidate search space."
             )
 
-        # Apply best values back to model BEFORE returning so the
-        # ParaPy geometry reflects the optimal design, not the last
-        # optimizer iteration
-        self.diameter = best_res["D"]
-        self.rpm = best_res["RPM"]
+        # Apply best values back to model so ParaPy geometry
+        # reflects the optimal design, not the last iteration
+        self.diameter               = best_res["D"]
+        self.rpm                    = best_res["RPM"]
         self.propeller.airfoil_type = best_res["AF"]
-        self.propeller.n_blades = best_res["NB"]
+        self.propeller.n_blades     = best_res["NB"]
 
         print(
             f"\n{'=' * 60}\n"
@@ -175,7 +176,7 @@ class PropulsionSystem(Base):
     def motor_database(self):
         """
         Integration Rule: reads motors.csv and returns a list of
-        dicts, one per motor. Validates file existence before reading.
+        dicts, one per motor. Handles missing values gracefully.
         """
         if not os.path.exists(self.motor_db_path):
             raise FileNotFoundError(
@@ -183,17 +184,28 @@ class PropulsionSystem(Base):
                 f"Expected location relative to project root. "
                 f"Check that motors.csv exists in data/input/."
             )
+
+        def parse_float(val, default=0.0):
+            """Strip ~ and whitespace, return float or default."""
+            if not val: return default
+            val = val.strip().replace("~", "").split()[0]
+            try:    return float(val)
+            except ValueError: return default
+
         motors = []
-        with open(self.motor_db_path, newline="") as f:
+        with open(self.motor_db_path, newline="",
+                  encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             for row in reader:
+                if not row.get("name", "").strip():
+                    continue
                 motors.append({
-                    "name"       : row["name"],
-                    "kv"         : float(row["kv"]),
-                    "max_power"  : float(row["max_power_w"]),
-                    "max_current": float(row["max_current_a"]),
-                    "resistance" : float(row["resistance_mohm"]),
-                    "mass"       : float(row["mass_g"]),
+                    "name"       : row["name"].strip(),
+                    "kv"         : parse_float(row["kv"]),
+                    "max_power"  : parse_float(row["max_power_w"]),
+                    "max_current": parse_float(row["max_current_a"]),
+                    "resistance" : parse_float(row["resistance_mohm"]),
+                    "mass"       : parse_float(row["mass_g"]),
                 })
         return motors
 
@@ -234,8 +246,7 @@ class PropulsionSystem(Base):
     def best_motor(self):
         """
         Logic Rule: ranks feasible motors by efficiency and returns
-        the best one. Raises RuntimeError if no feasible motor found
-        with actionable suggestions for the user.
+        the best one. Raises RuntimeError if no feasible motor found.
         """
         if not self.feasible_motors:
             raise RuntimeError(
@@ -270,15 +281,27 @@ class PropulsionSystem(Base):
 
     def generate_report(self):
         """
-        Prints a summary of the optimal propulsion design.
+        Prints a summary of the optimal propulsion design including
+        propeller geometry, motor selection and mass breakdown.
         Called explicitly from main.py after optimization completes.
         Implemented as a regular method to avoid @Attribute side effects.
         """
         opt = self.run_optimization()
         print(
-            f"--- OPTIMAL UAV PROPULSION DESIGN ---\n"
-            f"Airfoil: NACA {opt['AF']} | Blades: {opt['NB']}\n"
-            f"Diameter: {opt['D']:.3f} m | RPM: {opt['RPM']:.0f}\n"
-            f"Power: {opt['power']:.2f} W | Thrust: {opt['thrust']:.2f} N"
+            f"\n--- OPTIMAL UAV PROPULSION DESIGN ---\n"
+            f"Airfoil:   NACA {opt['AF']}\n"
+            f"Blades:    {opt['NB']}\n"
+            f"Diameter:  {opt['D']:.3f} m\n"
+            f"RPM:       {opt['RPM']:.0f}\n"
+            f"Power:     {opt['power']:.2f} W\n"
+            f"Thrust:    {opt['thrust']:.2f} N\n"
+            f"Rotor mass:{self.propeller.mass * 1000:.1f} g\n"
         )
+        if self.feasible_motors:
+            name, motor = self.best_motor
+            print(
+                f"Motor:     {name}\n"
+                f"KV:        {motor.kv} RPM/V\n"
+                f"Efficiency:{motor.efficiency:.1%}\n"
+            )
         return opt

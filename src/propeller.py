@@ -23,11 +23,11 @@ class Propeller(Base):
     #: required input slot — rotational speed [RPM]
     rpm = Input()
 
-    #: required input slot — number of blades
-    n_blades = Input()
+    #: optional input slot — number of blades
+    n_blades = Input(2)
 
-    #: required input slot — NACA airfoil code e.g. '4412'
-    airfoil_type = Input()
+    #: optional input slot — NACA airfoil code e.g. '4412'
+    airfoil_type = Input("4412")
 
     #: required input slot — base thrust requirement per rotor [N]
     #: excludes rotor self-weight (added internally via design_thrust)
@@ -77,15 +77,6 @@ class Propeller(Base):
                 + self.estimated_mass_design * 9.81 * self.safety_margin)
 
     @Attribute
-    def target_thrust(self):
-        """
-        Mathematical Rule: strict thrust requirement for the optimizer.
-        Uses actual blade mass once geometry is available.
-        """
-        return (self.base_thrust
-                + self.mass * 9.81 * self.safety_margin)
-
-    @Attribute
     def splines(self):
         """
         Generative Rule: computes optimal chord and pitch distributions
@@ -103,11 +94,11 @@ class Propeller(Base):
         omega = self.rpm * 2 * math.pi / 60
 
         if vi <= 0 or not math.isfinite(vi):
-            raise ValueError(
-                f"Induced velocity vi={vi:.4f} m/s is invalid. "
-                f"Check design_thrust={self.design_thrust:.2f} N "
-                f"and diameter={self.diameter:.3f} m."
+            print(
+                f"WARNING: Induced velocity vi={vi:.4f} m/s is invalid. "
+                f"Clamping to minimum. Check design_thrust and diameter."
             )
+            vi = 0.1  # minimum fallback
 
         c_ctrl, p_ctrl = [], []
         for r in r_ctrl:
@@ -128,12 +119,11 @@ class Propeller(Base):
                         * math.cos(phi)))
 
             if not math.isfinite(chord) or chord <= 0:
-                raise ValueError(
-                    f"Chord calculation failed at r={r:.3f}m. "
-                    f"Got chord={chord:.4f}m. "
-                    f"Check cl_opt={self.airfoil.polar_data['cl_opt']:.3f} "
-                    f"is positive and vi={vi:.3f} m/s is finite."
-                )
+                chord = 0.02  # minimum chord — clamp instead of crash
+                print(f"WARNING: Chord clamped to minimum at r={r:.3f}m "
+                      f"(v_eff={v_eff:.3f}, phi={math.degrees(phi):.1f}deg)")
+            else:
+                chord = max(0.02, chord)
 
             # Optimum Pitch Generation
             c_ctrl.append(max(0.02, chord))

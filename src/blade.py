@@ -3,7 +3,7 @@ import math
 from parapy.core import Base, Input, Attribute, Part, Sequence
 from parapy.geom import LoftedSurface, RotatedShape, Vector
 
-from .blade_section import BladeSection
+from src.blade_section import BladeSection
 
 
 class Blade(Base):
@@ -68,7 +68,7 @@ class Blade(Base):
             )
         return torque
 
-    @Part
+    @Part(parse=False)
     def surface(self):
         """
         Geometry Rule: lofts the section curves into a 3D blade skin.
