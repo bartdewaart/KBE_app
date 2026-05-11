@@ -1,6 +1,7 @@
 import math
 
 from parapy.core import Base, Input, Attribute
+from .config import get_value
 
 
 class ElectricMotor(Base):
@@ -12,19 +13,19 @@ class ElectricMotor(Base):
     """
 
     #: optional input slot — motor velocity constant [RPM/V]
-    kv          = Input(900)
+    kv          = Input(get_value("motor", "kv", default=900))
 
     #: optional input slot — maximum rated power [W]
-    max_power   = Input(500.0)
+    max_power   = Input(get_value("motor", "max_power", default=500.0))
 
     #: optional input slot — maximum rated current [A]
-    max_current = Input(30.0)
+    max_current = Input(get_value("motor", "max_current", default=30.0))
 
     #: optional input slot — winding resistance [mOhm]
-    resistance  = Input(40)
+    resistance  = Input(get_value("motor", "resistance", default=40))
 
     #: optional input slot — motor mass [g]
-    mass        = Input(20)
+    mass        = Input(get_value("motor", "mass", default=20))
 
     #: required input slot — required rotational speed [RPM]
     rpm_req     = Input()
@@ -64,7 +65,8 @@ class ElectricMotor(Base):
         """
         Mathematical Rule: total electrical power draw [W].
         """
-        return self.current_required * self.voltage_required
+        r_ohm = self.resistance / 1000.0
+        return self.current_required * self.voltage_required + (self.current_required ** 2) * r_ohm
 
     @Attribute
     def efficiency(self):
@@ -75,7 +77,7 @@ class ElectricMotor(Base):
         shaft_power = self.torque_req * (self.rpm_req * 2 * math.pi / 60)
         if self.power_required > 0:
             eta = shaft_power / self.power_required
-            if eta > 1.0:
+            if eta > 1.05:
                 print(
                     f"WARNING: Motor efficiency > 100% ({eta:.2%}). "
                     f"This indicates torque_req or rpm_req may be incorrect. "

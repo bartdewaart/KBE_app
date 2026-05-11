@@ -1,0 +1,66 @@
+propulsion_system:
+  motor_db_path: data/input/motors.csv
+  diameter: 0.3
+  rpm: 5000
+  airfoil_type: "4412"
+  n_blades: 2
+  airfoil_candidates:
+    - "0012"
+    - "2412"
+    - "4412"
+    - "6412"
+    - "2415"
+    - "4415"
+    - "23012"
+    - "23015"
+  blade_candidates:
+    - 2
+    - 3
+    - 4
+  optimizer:
+    x0_diameter: 0.3
+    x0_rpm: 5000
+    diameter_min: 0.1
+    rpm_min: 1000
+    rpm_max: 15000
+    ftol: 0.001
+
+propeller:
+  diameter: 0.3
+  rpm: 5000
+  n_blades: 2
+  airfoil_type: "4412"
+  n_segments: 8
+  thrust_to_weight: 1.5
+  min_chord: 0.005
+  hub_radius: 0.02
+  hub_height: 0.04
+  pitch_offset: 0.05
+  pitch_sign: 1.0
+  cl_opt: 1.0
+
+blade_section:
+  thickness_factor: 1.0
+  pitch_deg_max: 45.0
+
+airfoil:
+  naca_code: "4412"
+  reynolds: 300000
+  n_points: 60
+  chord: 1.0
+  thickness_factor: 1.0
+
+battery:
+  energy_density: 200
+  capacity: 1000
+
+motor:
+  kv: 900
+  max_power: 500.0
+  max_current: 30.0
+  resistance: 40
+  mass: 20
+
+debug:
+  airfoil: true
+  loft: true

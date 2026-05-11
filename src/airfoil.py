@@ -3,8 +3,10 @@ import os
 import subprocess
 
 import numpy as np
-from parapy.core import Base, Input, Attribute
+from parapy.core import Base, Input, Attribute, Part
+from parapy.geom import BSplineCurve, Position
 from scipy.interpolate import interp1d
+from .config import get_value
 
 
 class Airfoil(Base):
@@ -14,52 +16,54 @@ class Airfoil(Base):
     """
 
     #: required input slot — NACA 4-digit code as string
-    naca_code = Input("4412")
+    naca_code = Input(get_value("airfoil", "naca_code", default="4412"))
 
     #: optional input slot — Reynolds number for viscous polar
-    reynolds = Input(300000)
+    reynolds = Input(get_value("airfoil", "reynolds", default=300000))
 
     #: optional input slot — number of points for geometry generation
-    n_points = Input(60)
+    n_points = Input(get_value("airfoil", "n_points", default=60))
+
+    #: optional input slot — chord length for geometry scaling
+    chord = Input(get_value("airfoil", "chord", default=1.0))
+
+    #: optional input slot — thickness scale factor
+    thickness_factor = Input(get_value("airfoil", "thickness_factor", default=1.0))
+
+    #: optional input slot — placement in 3D space
+    position = Input(Position())
 
     @Attribute
     def polar_data(self):
         """
         Integration Rule: runs XFOIL via subprocess, parses the polar
         file and builds interpolators for Cl and Cd.
-
-        NOTE: deleting the stale polar file before running is an
-        intentional side effect — without it XFOIL appends to old data
-        and produces corrupt polars. This is the only side effect in
-        this attribute and is unavoidable given XFOIL's file-based I/O.
         """
         polar_file = f"polar_{self.naca_code}_{int(self.reynolds)}.txt"
 
-        # Domain Protection: remove stale file to prevent corrupt data
-        if os.path.exists(polar_file):
-            os.remove(polar_file)
+        # Check if polar file already exists
+        if not os.path.exists(polar_file):
+            commands = (
+                f"NACA {self.naca_code}\n"
+                "PANE\n"
+                "OPER\n"
+                f"VISC {self.reynolds}\n"
+                "ITER 200\n"
+                "PACC\n"
+                f"{polar_file}\n\n"
+                f"ASEQ -5 20 0.5\n"
+                "PACC\n"
+                "QUIT\n"
+            )
 
-        commands = (
-            f"NACA {self.naca_code}\n"
-            "PANE\n"
-            "OPER\n"
-            f"VISC {self.reynolds}\n"
-            "ITER 200\n"
-            "PACC\n"
-            f"{polar_file}\n\n"
-            f"ASEQ -5 20 0.5\n"
-            "PACC\n"
-            "QUIT\n"
-        )
-
-        process = subprocess.Popen(
-            "xfoil",
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        process.communicate(commands)
+            process = subprocess.Popen(
+                "xfoil",
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            process.communicate(commands)
 
         # Parse polar file
         raw_data = []
@@ -123,104 +127,123 @@ class Airfoil(Base):
             float(data["cd_interp"](alpha_deg))
         )
 
-    @Attribute
+    @Part(parse=False)
+    def curve(self):
+        points = self._clean_points(self.points)
+        if len(points) < 4:
+            points = self._clean_points(self._fallback_points())
+        return BSplineCurve(control_points=points, degree=3)
+
     @Attribute
     def points(self):
-        """
-        Geometry Rule: generates NACA 4 or 5-digit airfoil coordinates
-        for the FittedCurve in BladeSection.
-        Returns a counter-clockwise list of [x, y, 0] points.
-        """
-        if len(self.naca_code) not in (4, 5):
-            raise ValueError(
-                f"NACA code '{self.naca_code}' is not a valid 4 or 5-digit code. "
-                f"Example valid codes: '4412', '23012'."
-            )
+        file_path = os.path.join("data", "airfoil_library", f"naca{self.naca_code}.dat")
+        debug = bool(get_value("debug", "airfoil", default=False))
 
-        x = np.linspace(0, 1, self.n_points)
+        # DEBUG 1: Verify path
+        if debug:
+            print(f"\n--- DEBUG: Point Generation for NACA {self.naca_code} ---")
+            print(f"Target Path: {os.path.abspath(file_path)}")
 
-        # Thickness distribution (same formula for both 4 and 5-digit series)
-        t = int(self.naca_code[-2:]) / 100.0
-        yt = (5 * t * (
-                0.2969 * np.sqrt(x)
-                - 0.1260 * x
-                - 0.3516 * x ** 2
-                + 0.2843 * x ** 3
-                - 0.1015 * x ** 4
-        ))
+        if not os.path.exists(file_path):
+            if debug:
+                print(f"CRITICAL ERROR: File not found at {file_path}")
+            return self._fallback_points()
 
-        if len(self.naca_code) == 4:
-            # ── NACA 4-digit camber line ──────────────────────────────────
-            # Parameters extracted from code digits:
-            # digit 1 → max camber (m), digit 2 → camber position (p)
-            m = int(self.naca_code[0]) / 100.0
-            p = int(self.naca_code[1]) / 10.0
+        point_lst = []
+        try:
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+                if debug:
+                    print(f"Total lines in file: {len(lines)}")
 
-            # Domain Protection: avoid division by zero for symmetric
-            # airfoils where p == 0 (e.g. NACA 0012)
-            if p < 1e-6:
-                xcam = np.zeros_like(x)
-            else:
-                xcam = np.where(
-                    x < p,
-                    m / p ** 2 * (2 * p * x - x ** 2),
-                    m / (1 - p) ** 2 * ((1 - 2 * p) + 2 * p * x - x ** 2)
-                )
+                # Check the first few lines to ensure it's not binary or empty
+                if len(lines) > 0:
+                    if debug:
+                        print(f"First line (header): {lines[0].strip()}")
 
-        else:
-            # ── NACA 5-digit camber line ──────────────────────────────────
-            # Parameters encoded differently from 4-digit series:
-            # digit 1 → design lift coefficient = digit * 3/20
-            # digit 2 → camber type: 1 = standard, 2 = reflexed
-            # digit 3 → max camber position p = digit / 20
-            # digits 4-5 → thickness (same as 4-digit)
-            reflex = int(self.naca_code[1])
-            p = int(self.naca_code[2]) / 20.0
+                for i, line in enumerate(lines[1:]):  # Skip header
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        try:
+                            x = float(parts[0])
+                            z = float(parts[1])
 
-            # Logic Rule: reflexed camber line requires additional constants
-            # and a different formula — not yet implemented
-            if reflex == 2:
-                raise NotImplementedError(
-                    f"NACA 5-digit reflexed camber line (second digit = 2) "
-                    f"is not yet implemented. '{self.naca_code}' was provided."
-                )
+                            # Scaling logic
+                            pt = self.position.translate(
+                                "x", x * self.chord,
+                                "z", z * self.chord * self.thickness_factor
+                            )
+                            point_lst.append(pt)
+                        except ValueError:
+                            if debug:
+                                print(f"Line {i + 2} skipped (invalid floats): {line.strip()}")
 
-            # Mathematical Rule: k1 constants are tabulated from the original
-            # NACA report for each standard camber position value
-            k1_table = {
-                0.05: 361.4,
-                0.10: 51.64,
-                0.15: 15.957,
-                0.20: 6.643,
-                0.25: 3.230,
-            }
+            if debug:
+                print(f"Successfully generated {len(point_lst)} points.")
 
-            # Domain Protection: p must correspond to a standard tabulated value
-            # Valid third digits are 1-5 giving p = 0.05 to 0.25
-            if round(p, 2) not in k1_table:
-                raise ValueError(
-                    f"NACA 5-digit code '{self.naca_code}' has p={p:.2f} "
-                    f"which is not a standard value. "
-                    f"Valid third digits are 1-5 (p = 0.05 to 0.25)."
-                )
+        except Exception as e:
+            if debug:
+                print(f"Unexpected error during file read: {e}")
 
-            k1 = k1_table[round(p, 2)]
+        # DEBUG 2: Final Validation
+        if len(point_lst) < 2:
+            if debug:
+                print("ERROR: Resulting point list is too short for a curve!")
+            # This is why you get the Geom_Curve error. We need at least 2 points.
+            return self._fallback_points()
 
-            # Mathematical Rule: standard non-reflexed 5-digit camber line
-            # forward of max camber position uses cubic polynomial,
-            # aft section is linear decay to trailing edge
-            xcam = np.where(
-                x < p,
-                (k1 / 6.0) * (x ** 3
-                              - 3 * p * x ** 2
-                              + p ** 2 * (3 - p) * x),
-                (k1 * p ** 3 / 6.0) * (1 - x)
-            )
+        return point_lst
 
-        pts_upper = [[xi, yi + yti, 0]
-                     for xi, yi, yti in zip(x, xcam, yt)]
-        pts_lower = [[xi, yi - yti, 0]
-                     for xi, yi, yti in zip(x, xcam, yt)]
+    def _clean_points(self, points):
+        """Remove duplicate/degenerate points to keep the curve builder stable."""
+        cleaned = []
+        last = None
+        tol = 1e-8
+        for pt in points:
+            if last is None:
+                cleaned.append(pt)
+                last = pt
+                continue
 
-        # Counter-clockwise loop: upper surface TE→LE, lower surface LE→TE
-        return pts_upper[::-1] + pts_lower[1:]
+            if (pt.x - last.x) ** 2 + (pt.y - last.y) ** 2 + (pt.z - last.z) ** 2 > tol:
+                cleaned.append(pt)
+                last = pt
+
+        if len(cleaned) < 4:
+            return self._fallback_points()
+
+        max_pts = 16
+        if len(cleaned) > max_pts:
+            step = max(1, len(cleaned) // (max_pts - 1))
+            sampled = cleaned[::step]
+            if sampled[-1] is not cleaned[-1]:
+                sampled.append(cleaned[-1])
+            cleaned = sampled
+
+        return cleaned
+
+
+    def _fallback_points(self):
+        """Generate a simple symmetric profile if no .dat file is available."""
+        code = "".join(ch for ch in str(self.naca_code) if ch.isdigit())
+        try:
+            thickness_pct = int(code[-2:]) if len(code) >= 2 else 12
+        except ValueError:
+            thickness_pct = 12
+
+        t = max(1.0, min(40.0, thickness_pct)) / 100.0
+        x_vals = np.linspace(0.0, 1.0, self.n_points)
+        y_t = 5.0 * t * (
+            0.2969 * np.sqrt(x_vals)
+            - 0.1260 * x_vals
+            - 0.3516 * x_vals ** 2
+            + 0.2843 * x_vals ** 3
+            - 0.1015 * x_vals ** 4
+        )
+
+        upper = [self.position.translate("x", x * self.chord, "z", y * self.chord * self.thickness_factor)
+                 for x, y in zip(reversed(x_vals), reversed(y_t))]
+        lower = [self.position.translate("x", x * self.chord, "z", -y * self.chord * self.thickness_factor)
+                 for x, y in zip(x_vals, y_t)]
+
+        return upper + lower[1:]
