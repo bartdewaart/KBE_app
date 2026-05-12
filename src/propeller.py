@@ -23,27 +23,30 @@ class Propeller(Base):
     #: required input slot — rotational speed [RPM]
     rpm = Input()
 
-    #: optional input slot — number of blades
+    #: optional input slot - number of blades
     n_blades = Input(2)
 
-    #: optional input slot — NACA airfoil code e.g. '4412'
+    #: optional input slot - NACA airfoil code e.g. '4412'
     airfoil_type = Input("4412")
 
-    #: required input slot — base thrust requirement per rotor [N]
+    #: required input slot - base thrust requirement per rotor [N]
     #: excludes rotor self-weight (added internally via design_thrust)
     base_thrust = Input()
 
-    #: required input slot — safety margin on thrust
+    #: required input slot - safety margin on thrust
     #: e.g. 1.5 means rotor must produce 150% of base thrust
     safety_margin = Input()
 
-    #: optional input slot — number of spanwise analysis sections
+    #: optional input slot - number of spanwise analysis sections
     n_segments = Input(30)
 
-    #: optional input slot — air density [kg/m³]
+    #: optional input slot - air density [kg/m³]
     air_density = Input(1.225)
 
-    @Part
+    #: optional input slot - hub radius [m], default value of 8mm
+    hub_radius = Input(0.008)  # add this
+
+    @Part(parse=False)
     def airfoil(self):
         """
         Integration Rule: instantiates the shared Airfoil object.
@@ -83,7 +86,7 @@ class Propeller(Base):
         at 5 control points using Betz momentum theory, then fits
         CubicSpline objects for smooth interpolation across all sections.
         """
-        r_hub  = 0.02
+        r_hub  = self.hub_radius
         r_tip  = self.diameter / 2
         r_ctrl = np.linspace(r_hub, r_tip, 5)
 
@@ -139,11 +142,11 @@ class Propeller(Base):
         Rotation angle = index * (2π / n_blades).
         """
         return Sequence(
-            type=Blade,
-            quantify=self.n_blades,
-            n_segments=self.n_segments,
-            rotation_angle=lambda item: item.index * (2 * math.pi / self.n_blades)
-        )
+        type=Blade,
+        quantify=self.n_blades,
+        n_segments=self.n_segments,
+        rotation_angle=lambda child: child.index * (2 * math.pi / self.n_blades)
+    )
 
     @Attribute
     def total_thrust(self):

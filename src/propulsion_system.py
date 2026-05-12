@@ -34,7 +34,7 @@ class PropulsionSystem(Base):
     rpm = Input(5000.0)
 
     #: optional input slot — NACA airfoil candidates to search over
-    airfoil_candidates = Input(["4412"])                            # reduce no of airfoils for testing Input(["0012", "2412", "4412", "6412","2415", "4415", "23012", "23015"])
+    airfoil_candidates = Input(["4412"])    # reduce no of airfoils for testing Input(["0012", "2412", "4412", "6412","2415", "4415", "23012", "23015"])
 
     #: optional input slot — blade count candidates to search over
     blade_candidates = Input([2, 3, 4])      # , 5, 6, 7, 8, 9, 10])
@@ -290,16 +290,28 @@ class PropulsionSystem(Base):
         Called explicitly from main.py after optimization completes.
         Implemented as a regular method to avoid @Attribute side effects.
         """
+        perf = self.propeller.performance
+
         print(
             f"\n--- OPTIMAL UAV PROPULSION DESIGN ---\n"
             f"Airfoil:   NACA {self.propeller.airfoil_type}\n"
             f"Blades:    {self.propeller.n_blades}\n"
             f"Diameter:  {self.diameter:.3f} m\n"
             f"RPM:       {self.rpm:.0f}\n"
-            f"Power:     {self.propeller.performance['shaft_power']:.2f} W\n"
-            f"Thrust:    {self.propeller.performance['thrust']:.2f} N\n"
+            f"Power:     {perf['shaft_power']:.2f} W\n"
+            f"Thrust:    {perf['thrust']:.2f} N\n"
             f"Rotor mass:{self.propeller.mass * 1000:.1f} g\n"
         )
+        summary = {
+            "airfoil": self.propeller.airfoil_type,
+            "n_blades": self.propeller.n_blades,
+            "diameter": self.diameter,
+            "rpm": self.rpm,
+            "shaft_power": perf["shaft_power"],
+            "thrust": perf["thrust"],
+            "rotor_mass": self.propeller.mass,
+        }
+
         if self.feasible_motors:
             name, motor = self.best_motor
             print(
@@ -307,3 +319,8 @@ class PropulsionSystem(Base):
                 f"KV:        {motor.kv} RPM/V\n"
                 f"Efficiency:{motor.efficiency:.1%}\n"
             )
+            summary["motor_name"] = name
+            summary["motor_kv"] = motor.kv
+            summary["motor_efficiency"] = motor.efficiency
+
+        return summary

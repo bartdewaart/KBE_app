@@ -38,14 +38,14 @@ class BladeSection(Base):
     def radius(self):
         """Geometry Rule: radial position of this section [m]."""
         p  = self.propeller_ref
-        dr = (p.diameter / 2 - 0.02) / p.n_segments
-        return 0.02 + (self.index + 0.5) * dr
+        dr = (p.diameter / 2 - p.hub_radius) / p.n_segments
+        return p.hub_radius + (self.index + 0.5) * dr
 
     @Attribute
     def dr(self):
         """Geometry Rule: radial width of this section [m]."""
         p = self.propeller_ref
-        return (p.diameter / 2 - 0.02) / p.n_segments
+        return (p.diameter / 2 - p.hub_radius) / p.n_segments
 
     @Attribute
     def chord(self):
@@ -182,16 +182,21 @@ class BladeSection(Base):
         """Geometry Rule: airfoil coordinate points from parent propeller."""
         return self.propeller_ref.airfoil.points
 
-    @Part
+    # Each func below receives parse=False because they depend on runtime-computed chord, radius, pitch
+    @Part(parse=False)
+    def fitted_curve(self):
+        return FittedCurve(points=self.airfoil_points)
+
+    @Part(parse=False)
+    def scaled_curve(self):
+        return ScaledShape(self.fitted_curve, factor=self.chord)
+
+    @Part(parse=False)
+    def rotated_curve(self):
+        return RotatedShape(self.scaled_curve, angle=self.pitch,
+                            vector=Vector(0, 0, 1))
+
+    @Part(parse=False)
     def section_curve(self):
-        return TranslatedShape(
-            RotatedShape(
-                ScaledShape(
-                    FittedCurve(points=self.airfoil_points),  # ← use attribute
-                    scale_factor=self.chord
-                ),
-                angle=self.pitch,
-                vector=Vector(0, 1, 0)
-            ),
-            displacement=Vector(0, 0, self.radius)
-        )
+        return TranslatedShape(self.rotated_curve,
+                               displacement=Vector(0, self.radius, 0))
