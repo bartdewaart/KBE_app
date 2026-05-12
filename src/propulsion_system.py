@@ -39,22 +39,24 @@ class PropulsionSystem(Base):
     #: optional input slot — blade count candidates to search over
     blade_candidates = Input([2, 3, 4])      # , 5, 6, 7, 8, 9, 10])
 
+    #: optional input slot — objective weight for rotor mass [W/kg]
+    mass_weight = Input(40.0)
+
+    #: optional input slot — max tip speed [m/s]
+    tip_speed_max = Input(200.0)
+
+    #: optional input slot — speed of sound [m/s]
+    speed_of_sound = Input(343.0)
+
     @Attribute
     def thrust_required(self):
         """
         Mathematical Rule: required thrust per rotor [N].
         Derived from MTOW, number of rotors and safety margin.
         """
-        return ((self.specs['MTOW'] * 9.81 / self.specs['n_rotors'])
-                * self.specs['safety_margin'])
+        return (self.specs['MTOW'] * 9.81 / self.specs['n_rotors'])
 
-    #: optional input slot — current airfoil type during optimization
-    airfoil_type = Input("0012")
-
-    #: optional input slot — current blade count during optimization
-    n_blades = Input(2)
-
-    @Part
+    @Part(parse=False)
     def propeller(self):
         """
         Configuration Rule: instantiates the Propeller object with
@@ -65,7 +67,7 @@ class PropulsionSystem(Base):
             diameter      = self.diameter,
             rpm           = self.rpm,
             safety_margin = self.specs['safety_margin'],
-            n_segments    = 10  # temporarily for testing
+            n_segments    = 30
         )
 
     def _obj(self, x_norm):
@@ -88,8 +90,17 @@ class PropulsionSystem(Base):
         self.diameter = x_norm[0] / 10.0
         self.rpm      = x_norm[1] * 1000.0
         produced = self.propeller.performance["thrust"]
-        required = self.propeller.design_thrust
+        required = ((self.thrust_required
+                 + self.propeller.mass * 9.81)
+                * self.specs['safety_margin'])
         return produced - required
+
+    def _tip_speed_constraint(self, x_norm):
+        self.diameter = x_norm[0] / 10.0
+        self.rpm      = x_norm[1] * 1000.0
+        omega = self.rpm * 2.0 * math.pi / 60.0
+        v_tip = omega * (self.diameter / 2.0)
+        return self.tip_speed_max - v_tip
 
     def run_optimization(self):
         """
@@ -111,7 +122,7 @@ class PropulsionSystem(Base):
         for af in self.airfoil_candidates:
             for nb in self.blade_candidates:
                 self.propeller.airfoil_type = af
-                self.propeller.n_blades = nb
+                self.propeller.n_blades     = nb
 
                 print(f"\n{'=' * 60}")
                 print(f"SEARCHING: NACA {af} | Blades: {nb} "
@@ -121,8 +132,10 @@ class PropulsionSystem(Base):
                 x0_norm     = [0.3 * 10.0, 5000 / 1000.0]
                 d_max_norm  = self.specs['max_diameter'] * 10.0
                 bounds_norm = [(0.8, d_max_norm), (1.0, 12.0)]
-                constraints = [{'type': 'ineq',
-                                'fun' : self._thrust_constraint}]
+                constraints = [
+                    {'type': 'ineq', 'fun': self._thrust_constraint},
+                    {'type': 'ineq', 'fun': self._tip_speed_constraint}
+                ]
 
                 res = minimize(
                     self._obj,
@@ -138,8 +151,7 @@ class PropulsionSystem(Base):
                     final_rpm = res.x[1] * 1000.0
 
                     self.diameter, self.rpm = final_d, final_rpm
-                    perf = self._compute_lightweight_performance()
-                    actual_t = perf["thrust"]
+                    actual_t = self.propeller.performance["thrust"]
 
                     if res.fun < best_res["power"]:
                         best_res = {
@@ -160,13 +172,12 @@ class PropulsionSystem(Base):
                 "airfoil and blade candidate search space."
             )
 
-        # Apply best values back to model BEFORE returning so the
-        # ParaPy geometry reflects the optimal design, not the last
-        # optimizer iteration
-        self.diameter = best_res["D"]
-        self.rpm = best_res["RPM"]
+        # Apply best values back to model so ParaPy geometry
+        # reflects the optimal design, not the last iteration
+        self.diameter               = best_res["D"]
+        self.rpm                    = best_res["RPM"]
         self.propeller.airfoil_type = best_res["AF"]
-        self.propeller.n_blades = best_res["NB"]
+        self.propeller.n_blades     = best_res["NB"]
 
         print(
             f"\n{'=' * 60}\n"
@@ -177,6 +188,17 @@ class PropulsionSystem(Base):
             f"Thrust={best_res['thrust']:.2f}N\n"
             f"{'=' * 60}"
         )
+
+        required = ((self.thrust_required
+                     + self.propeller.mass * 9.81)
+                    * self.specs['safety_margin'])
+        print(f"Required thrust: {required:.2f} N")
+        print(f"Produced thrust: {self.propeller.performance['thrust']:.2f} N")
+
+        omega = self.rpm * 2.0 * math.pi / 60.0
+        v_tip = omega * (self.diameter / 2.0)
+        mach_tip = v_tip / self.speed_of_sound
+        print(f"Tip Mach: {mach_tip:.2f}")
 
         return best_res
 
@@ -296,7 +318,6 @@ class PropulsionSystem(Base):
         Prints a summary of the optimal propulsion design including
         propeller geometry, motor selection and mass breakdown.
         Called explicitly from main.py after optimization completes.
-        Assumes run_optimization() has already been called.
         Implemented as a regular method to avoid @Attribute side effects.
         """
         perf = self.propeller.performance

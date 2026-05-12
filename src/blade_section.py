@@ -1,7 +1,7 @@
 import math
 
 from parapy.core import Base, Input, Attribute, Part
-from parapy.geom import FittedCurve, ScaledShape, RotatedShape, TranslatedShape, Vector
+from parapy.geom import FittedCurve, Point, RotatedCurve, ScaledCurve, TranslatedCurve, Vector
 
 
 class BladeSection(Base):
@@ -37,15 +37,19 @@ class BladeSection(Base):
     @Attribute
     def radius(self):
         """Geometry Rule: radial position of this section [m]."""
-        p  = self.propeller_ref
-        dr = (p.diameter / 2 - p.hub_radius) / p.n_segments
-        return p.hub_radius + (self.index + 0.5) * dr
+        p = self.propeller_ref
+        if p.n_segments < 2:
+            return 0.0
+        dr = (p.diameter / 2) / (p.n_segments - 1)
+        return self.index * dr
 
     @Attribute
     def dr(self):
         """Geometry Rule: radial width of this section [m]."""
         p = self.propeller_ref
-        return (p.diameter / 2 - p.hub_radius) / p.n_segments
+        if p.n_segments < 2:
+            return p.diameter / 2
+        return (p.diameter / 2) / (p.n_segments - 1)
 
     @Attribute
     def chord(self):
@@ -104,6 +108,13 @@ class BladeSection(Base):
         with relaxation for numerical stability.
         """
         airfoil    = self.propeller_ref.airfoil
+        p = self.propeller_ref
+        r_hub = p.hub_radius
+        r_tip = p.diameter / 2
+        root_cutoff = max(0.0, min(0.6, p.root_cutoff_ratio))
+        r_root = r_hub + root_cutoff * (r_tip - r_hub)
+        if self.radius < r_root:
+            return {"dT": 0.0, "dQ": 0.0}
         v_i        = math.sqrt(
             self.target_thrust / (2.0 * self.air_density * self.disk_area)
         )
@@ -122,6 +133,11 @@ class BladeSection(Base):
             v_eff = math.sqrt(v_ax ** 2 + v_rot ** 2)
             phi   = math.atan2(v_ax, v_rot)
             alpha = self.pitch - phi
+
+            polar = airfoil.polar_data
+            alpha_min = math.radians(polar["alpha_min_deg"])
+            alpha_max = math.radians(polar["alpha_max_deg"])
+            alpha = max(alpha_min, min(alpha_max, alpha))
 
             # Sectional Aerodynamic Forces
             cl, cd  = airfoil.get_cl_cd(alpha)
@@ -182,21 +198,42 @@ class BladeSection(Base):
         """Geometry Rule: airfoil coordinate points from parent propeller."""
         return self.propeller_ref.airfoil.points
 
+    @Attribute
+    def section_points(self):
+        """Geometry Rule: map airfoil points to the local blade frame.
+
+        Local axes:
+        - X: spanwise (radial)
+        - Y: tangential (chord direction)
+        - Z: normal to hub plane (thickness)
+        """
+        return [Point(0.0, pt[0] - 0.5, pt[1]) for pt in self.airfoil_points]
+
     # Each func below receives parse=False because they depend on runtime-computed chord, radius, pitch
     @Part(parse=False)
     def fitted_curve(self):
-        return FittedCurve(points=self.airfoil_points)
+        return FittedCurve(points=self.section_points)
 
     @Part(parse=False)
     def scaled_curve(self):
-        return ScaledShape(self.fitted_curve, factor=self.chord)
+        return ScaledCurve(
+            curve_in=self.fitted_curve,
+            reference_point=Point(0, 0, 0),
+            factor=self.chord
+        )
 
     @Part(parse=False)
     def rotated_curve(self):
-        return RotatedShape(self.scaled_curve, angle=self.pitch,
-                            vector=Vector(0, 0, 1))
+        return TranslatedCurve(
+            RotatedCurve(
+                self.scaled_curve,
+                rotation_point=Point(0, 0, 0),
+                angle=self.pitch,
+                vector=Vector(1, 0, 0)
+            ),
+            displacement=Vector(self.radius, 0, 0)
+        )
 
-    @Part(parse=False)
+    @Attribute
     def section_curve(self):
-        return TranslatedShape(self.rotated_curve,
-                               displacement=Vector(0, self.radius, 0))
+        return self.rotated_curve

@@ -1,7 +1,7 @@
 import math
 
 from parapy.core import Base, Input, Attribute, Part, Sequence
-from parapy.geom import LoftedSurface, RotatedShape, Vector
+from parapy.geom import LoftedSurface, RotatedShape, Vector, Point
 
 from src.blade_section import BladeSection
 
@@ -68,6 +68,13 @@ class Blade(Base):
             )
         return torque
 
+    @Attribute
+    def rotation_angle_value(self):
+        value = self.rotation_angle
+        if callable(value):
+            value = value(self)
+        return float(value)
+
     @Part(parse=False)
     def surface(self):
         """
@@ -82,7 +89,8 @@ class Blade(Base):
                 f"Increase n_segments to at least 2."
             )
         return LoftedSurface(
-            profiles=[s.section_curve for s in self.sections]
+            profiles=[s.section_curve for s in self.sections],
+            hidden=True
         )
 
     @Part
@@ -94,6 +102,7 @@ class Blade(Base):
         """
         return RotatedShape(
             shape_in=self.surface,
+            rotation_point=Point(0, 0, 0),
             vector=Vector(0, 0, 1),
-            angle=self.rotation_angle
+            angle=self.rotation_angle_value
         )

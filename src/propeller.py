@@ -3,7 +3,7 @@ import math
 import numpy as np
 from parapy.core import Base, Input, Attribute, Part, Sequence
 from parapy.geom import Cylinder, Vector
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import CubicSpline, PchipInterpolator
 
 from .airfoil import Airfoil
 from .blade import Blade
@@ -44,7 +44,20 @@ class Propeller(Base):
     air_density = Input(1.225)
 
     #: optional input slot - hub radius [m], default value of 8mm
-    hub_radius = Input(0.008)  # add this
+    hub_radius = Input(0.02)  # increased default for realistic hub
+
+    #: optional input slot - hub height [m]
+    hub_height = Input(0.04)
+
+    #: optional input slot - geometry limits
+    min_chord = Input(0.004)
+    max_chord_fraction = Input(0.20)
+    min_pitch_deg = Input(2.0)
+    max_pitch_deg = Input(35.0)
+
+    #: optional input slot - inner section cutoff (fraction of span)
+    root_cutoff_ratio = Input(0.10)
+
 
     @Part(parse=False)
     def airfoil(self):
@@ -76,8 +89,9 @@ class Propeller(Base):
         Mathematical Rule: thrust target used for spline generation.
         Uses estimated mass to avoid circular dependency with actual mass.
         """
-        return (self.base_thrust
-                + self.estimated_mass_design * 9.81 * self.safety_margin)
+        return ((self.base_thrust
+             + self.estimated_mass_design * 9.81)
+            * self.safety_margin)
 
     @Attribute
     def splines(self):
@@ -88,7 +102,7 @@ class Propeller(Base):
         """
         r_hub  = self.hub_radius
         r_tip  = self.diameter / 2
-        r_ctrl = np.linspace(r_hub, r_tip, 5)
+        r_ctrl = np.linspace(r_hub, r_tip, 9)
 
         # Mathematical Rule: uniform induced velocity from 1D momentum theory
         vi    = math.sqrt(
@@ -104,6 +118,40 @@ class Propeller(Base):
             vi = 0.1  # minimum fallback
 
         c_ctrl, p_ctrl = [], []
+        min_pitch = math.radians(self.min_pitch_deg)
+        max_pitch = math.radians(self.max_pitch_deg)
+
+        max_chord = max(self.min_chord, self.max_chord_fraction * r_tip)
+
+        def _opt_chord_pitch(r):
+            phi = math.atan2(vi, omega * r)
+            v_eff = math.sqrt(vi ** 2 + (omega * r) ** 2)
+
+            f_tip = ((self.n_blades / 2)
+                     * (r_tip - r) / max(1e-6, r * math.sin(phi)))
+              F = ((2 / math.pi)
+                  * math.acos(max(0.0, min(1.0, math.exp(-f_tip)))))
+              F = max(0.05, F)
+
+            chord = ((8 * math.pi * r * vi ** 2 * F)
+                     / (self.n_blades
+                        * v_eff ** 2
+                        * self.airfoil.polar_data["cl_opt"]
+                        * math.cos(phi)))
+            if not math.isfinite(chord) or chord <= 0:
+                chord = self.min_chord
+
+            pitch = phi + self.airfoil.polar_data["alpha_opt_rad"]
+            pitch = max(min_pitch, min(max_pitch, pitch))
+
+            chord = max(self.min_chord, min(max_chord, chord))
+            return chord, pitch
+
+        root_cutoff = max(0.0, min(0.6, self.root_cutoff_ratio))
+        r_root = r_hub + root_cutoff * (r_tip - r_hub)
+        root_chord, root_pitch = _opt_chord_pitch(r_root)
+        chord_hub = min(max_chord, max(self.min_chord, 2.0 * self.hub_radius))
+        pitch_hub = max(root_pitch, min_pitch)
         for r in r_ctrl:
             phi   = math.atan2(vi, omega * r)
             v_eff = math.sqrt(vi ** 2 + (omega * r) ** 2)
@@ -115,27 +163,37 @@ class Propeller(Base):
                      * math.acos(max(0.0, min(1.0, math.exp(-f_tip)))))
             # Enforce minimum tip-loss correction to avoid chord collapse
             # When f_tip is very small, F approaches 0 which zeros out chord
-            F = max(0.4, F)
+            F = max(0.05, F)
 
-            # Optimum Chord Generation
-            chord = ((8 * math.pi * r * vi ** 2 * F)
-                     / (self.n_blades
-                        * v_eff ** 2
-                        * self.airfoil.polar_data["cl_opt"]
-                        * math.cos(phi)))
-
-            if not math.isfinite(chord) or chord <= 0:
-                chord = 0.02  # minimum chord — clamp instead of crash
+            # Optimum Chord/Pitch Generation
+            chord, pitch = _opt_chord_pitch(r)
+            if chord <= self.min_chord:
                 print(f"WARNING: Chord clamped to minimum at r={r:.3f}m "
                       f"(v_eff={v_eff:.3f}, phi={math.degrees(phi):.1f}deg)")
-            else:
-                chord = max(0.02, chord)
 
-            # Optimum Pitch Generation
-            c_ctrl.append(max(0.02, chord))
-            p_ctrl.append(phi + self.airfoil.polar_data["alpha_opt_rad"])
+            # Inner section transition to structural hub profile
+            if r < r_root:
+                if r_root > r_hub:
+                    t = (r - r_hub) / (r_root - r_hub)
+                else:
+                    t = 0.0
+                chord = chord_hub + t * (root_chord - chord_hub)
+                pitch = pitch_hub + t * (root_pitch - pitch_hub)
 
-        return CubicSpline(r_ctrl, c_ctrl), CubicSpline(r_ctrl, p_ctrl)
+            c_ctrl.append(max(self.min_chord, chord))
+            p_ctrl.append(pitch)
+
+        if getattr(self, "debug_splines", True):
+            print("DEBUG chord control points (r, chord):")
+            for r, c in zip(r_ctrl, c_ctrl):
+                print(f"  r={r:.3f} m, c={c:.4f} m")
+            r_samples = np.linspace(r_hub, r_tip, 9)
+            c_spline = CubicSpline(r_ctrl, c_ctrl)
+            print("DEBUG chord samples:")
+            for r in r_samples:
+                print(f"  r={r:.3f} m, c={float(c_spline(r)):.4f} m")
+
+        return CubicSpline(r_ctrl, c_ctrl), PchipInterpolator(r_ctrl, p_ctrl)
 
     @Part
     def blades(self):
@@ -202,12 +260,21 @@ class Propeller(Base):
         applies carbon fibre density.
         """
         density_material = 1600  # Carbon fibre [kg/m³]
+        # Unit-chord airfoil area (x,y) from the generated coordinates.
+        pts = [(p[0], p[1]) for p in self.airfoil.points]
+        area_unit = 0.0
+        for i in range(len(pts)):
+            x0, y0 = pts[i]
+            x1, y1 = pts[(i + 1) % len(pts)]
+            area_unit += x0 * y1 - x1 * y0
+        area_unit = abs(area_unit) * 0.5
+
         blade_volume = sum(
-            s.chord * (s.chord * 0.12) * s.dr
+            area_unit * (s.chord ** 2) * s.dr
             for blade in self.blades
             for s in blade.sections
         )
-        return blade_volume * density_material # removed n_blades multiplier (duplicity)
+        return blade_volume * density_material
 
     @Part
     def hub(self):
@@ -215,8 +282,8 @@ class Propeller(Base):
         Geometry Rule: cylindrical hub placeholder at rotor centre.
         """
         return Cylinder(
-            radius=0.02,
-            height=0.04,
+            radius=self.hub_radius,
+            height=self.hub_height,
             centered=True,
             color="DarkSlateGray"
         )

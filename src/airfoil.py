@@ -35,31 +35,28 @@ class Airfoil(Base):
         """
         polar_file = f"polar_{self.naca_code}_{int(self.reynolds)}.txt"
 
-        # Domain Protection: remove stale file to prevent corrupt data
-        if os.path.exists(polar_file):
-            os.remove(polar_file)
+        if not os.path.exists(polar_file):
+            commands = (
+                f"NACA {self.naca_code}\n"
+                "PANE\n"
+                "OPER\n"
+                f"VISC {self.reynolds}\n"
+                "ITER 200\n"
+                "PACC\n"
+                f"{polar_file}\n\n"
+                f"ASEQ -5 20 0.5\n"
+                "PACC\n"
+                "QUIT\n"
+            )
 
-        commands = (
-            f"NACA {self.naca_code}\n"
-            "PANE\n"
-            "OPER\n"
-            f"VISC {self.reynolds}\n"
-            "ITER 200\n"
-            "PACC\n"
-            f"{polar_file}\n\n"
-            f"ASEQ -5 20 0.5\n"
-            "PACC\n"
-            "QUIT\n"
-        )
-
-        process = subprocess.Popen(
-            "xfoil",
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True
-        )
-        process.communicate(commands)
+            process = subprocess.Popen(
+                "xfoil",
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            process.communicate(commands)
 
         # Parse polar file
         raw_data = []
@@ -111,7 +108,9 @@ class Airfoil(Base):
             "cl_interp"     : cl_interp,
             "cd_interp"     : cd_interp,
             "alpha_opt_rad" : math.radians(alphas[idx]),
-            "cl_opt"        : cls[idx]
+            "cl_opt"        : cls[idx],
+            "alpha_min_deg" : alphas[0],
+            "alpha_max_deg" : alphas[-1]
         }
 
     def get_cl_cd(self, alpha_rad):
