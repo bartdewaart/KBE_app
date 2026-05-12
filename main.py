@@ -19,8 +19,9 @@ def load_inputs(file_path):
             f"Expected location: data/input/mission.csv"
         )
     specs = {}
-    with open(file_path, newline="") as f:
-        reader = csv.DictReader(f)
+    with open(file_path, newline="", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        print(f"DEBUG mission headers: {reader.fieldnames}")
         for row in reader:
             # Convert numeric values to float, keep strings as-is
             try:

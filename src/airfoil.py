@@ -124,7 +124,6 @@ class Airfoil(Base):
         )
 
     @Attribute
-    @Attribute
     def points(self):
         """
         Geometry Rule: generates NACA 4 or 5-digit airfoil coordinates

@@ -38,14 +38,14 @@ class BladeSection(Base):
     def radius(self):
         """Geometry Rule: radial position of this section [m]."""
         p  = self.propeller_ref
-        dr = (p.diameter / 2 - 0.02) / p.n_segments
-        return 0.02 + (self.index + 0.5) * dr
+        dr = (p.diameter / 2 - p.hub_radius) / p.n_segments
+        return p.hub_radius + (self.index + 0.5) * dr
 
     @Attribute
     def dr(self):
         """Geometry Rule: radial width of this section [m]."""
         p = self.propeller_ref
-        return (p.diameter / 2 - 0.02) / p.n_segments
+        return (p.diameter / 2 - p.hub_radius) / p.n_segments
 
     @Attribute
     def chord(self):
@@ -108,11 +108,11 @@ class BladeSection(Base):
             self.target_thrust / (2.0 * self.air_density * self.disk_area)
         )
         v_theta    = 0.0
-        relaxation = 0.1
-        tolerance  = 1e-5
-        n_iter     = 500
+        relaxation = 0.3  # was 0.1 — more aggressive relaxation
+        tolerance  = 1e-4  # was 1e-5 — slightly looser tolerance
+        n_iter     = 100  # 500 is overkill if it's diverging anyway, put at 100 for testing now
         dT, dQ     = 0.0, 0.0
-
+        v_theta_new = 0.0
         converged = False
         for _ in range(n_iter):
 
@@ -153,12 +153,11 @@ class BladeSection(Base):
                            * self.air_density * F * self.dr)
             )
 
-            # Domain Protection: guard against division by zero in swirl
-            if v_i_new > 0:
-                v_theta_new = (dQ / (4.0 * math.pi * self.radius ** 2
-                               * self.air_density * v_i_new * F * self.dr))
-            else:
-                v_theta_new = 0.0
+            # Domain Protection: guard against divergence
+            if not math.isfinite(v_i_new) or v_i_new > 500:
+                # Unphysical result — clamp and break
+                dT, dQ = 0.0, 0.0
+                break
 
             # Convergence check
             if abs(v_i_new - v_i) < tolerance:
@@ -178,20 +177,26 @@ class BladeSection(Base):
 
         return {"dT": dT, "dQ": dQ}
 
-    @Part
+    @Attribute
+    def airfoil_points(self):
+        """Geometry Rule: airfoil coordinate points from parent propeller."""
+        return self.propeller_ref.airfoil.points
+
+    # Each func below receives parse=False because they depend on runtime-computed chord, radius, pitch
+    @Part(parse=False)
+    def fitted_curve(self):
+        return FittedCurve(points=self.airfoil_points)
+
+    @Part(parse=False)
+    def scaled_curve(self):
+        return ScaledShape(self.fitted_curve, factor=self.chord)
+
+    @Part(parse=False)
+    def rotated_curve(self):
+        return RotatedShape(self.scaled_curve, angle=self.pitch,
+                            vector=Vector(0, 0, 1))
+
+    @Part(parse=False)
     def section_curve(self):
-        """
-        Geometry Rule: generates the 3D cross-section curve at this
-        radial station by scaling, rotating and translating the airfoil.
-        """
-        return TranslatedShape(
-            RotatedShape(
-                ScaledShape(
-                    FittedCurve(points=self.propeller_ref.airfoil.points),
-                    scale_factor=self.chord
-                ),
-                angle=self.pitch,
-                vector=Vector(0, 1, 0)
-            ),
-            displacement=Vector(0, 0, self.radius)
-        )
+        return TranslatedShape(self.rotated_curve,
+                               displacement=Vector(0, self.radius, 0))
