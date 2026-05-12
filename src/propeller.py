@@ -201,7 +201,7 @@ class Propeller(Base):
             for blade in self.blades
             for s in blade.sections
         )
-        return self.n_blades * blade_volume * density_material
+        return blade_volume * density_material # removed n_blades multiplier (duplicity)
 
     @Part
     def hub(self):

@@ -34,11 +34,10 @@ class PropulsionSystem(Base):
     rpm = Input(5000.0)
 
     #: optional input slot — NACA airfoil candidates to search over
-    airfoil_candidates = Input(["0012", "2412", "4412", "6412",
-                                "2415", "4415", "23012", "23015"])
+    airfoil_candidates = Input(["4412"])                            # reduce no of airfoils for testing Input(["0012", "2412", "4412", "6412","2415", "4415", "23012", "23015"])
 
     #: optional input slot — blade count candidates to search over
-    blade_candidates = Input([2, 3, 4, 5, 6, 7, 8, 9, 10])
+    blade_candidates = Input([2, 3, 4])      # , 5, 6, 7, 8, 9, 10])
 
     @Attribute
     def thrust_required(self):
@@ -59,7 +58,8 @@ class PropulsionSystem(Base):
             base_thrust   = self.thrust_required,
             diameter      = self.diameter,
             rpm           = self.rpm,
-            safety_margin = self.specs['safety_margin']
+            safety_margin = self.specs['safety_margin'],
+            n_segments    = 10  # temporarily for testing
         )
 
     def _obj(self, x_norm):
@@ -114,7 +114,7 @@ class PropulsionSystem(Base):
 
                 x0_norm     = [0.3 * 10.0, 5000 / 1000.0]
                 d_max_norm  = self.specs['max_diameter'] * 10.0
-                bounds_norm = [(0.5, d_max_norm), (0.5, 12.0)]
+                bounds_norm = [(0.8, d_max_norm), (1.0, 12.0)]
                 constraints = [{'type': 'ineq',
                                 'fun' : self._thrust_constraint}]
 
@@ -195,7 +195,8 @@ class PropulsionSystem(Base):
         motors = []
         with open(self.motor_db_path, newline="",
                   encoding="utf-8-sig") as f:
-            reader = csv.DictReader(f)
+            reader = csv.DictReader(f, delimiter=";")
+            print(f"DEBUG headers: {reader.fieldnames}")  # ← add this
             for row in reader:
                 if not row.get("name", "").strip():
                     continue
@@ -207,6 +208,9 @@ class PropulsionSystem(Base):
                     "resistance" : parse_float(row["resistance_mohm"]),
                     "mass"       : parse_float(row["mass_g"]),
                 })
+
+        print(f"DEBUG: Reading from {self.motor_db_path}")
+        print(f"DEBUG: Found {len(motors)} motors")
         return motors
 
     @Attribute
@@ -286,15 +290,14 @@ class PropulsionSystem(Base):
         Called explicitly from main.py after optimization completes.
         Implemented as a regular method to avoid @Attribute side effects.
         """
-        opt = self.run_optimization()
         print(
             f"\n--- OPTIMAL UAV PROPULSION DESIGN ---\n"
-            f"Airfoil:   NACA {opt['AF']}\n"
-            f"Blades:    {opt['NB']}\n"
-            f"Diameter:  {opt['D']:.3f} m\n"
-            f"RPM:       {opt['RPM']:.0f}\n"
-            f"Power:     {opt['power']:.2f} W\n"
-            f"Thrust:    {opt['thrust']:.2f} N\n"
+            f"Airfoil:   NACA {self.propeller.airfoil_type}\n"
+            f"Blades:    {self.propeller.n_blades}\n"
+            f"Diameter:  {self.diameter:.3f} m\n"
+            f"RPM:       {self.rpm:.0f}\n"
+            f"Power:     {self.propeller.performance['shaft_power']:.2f} W\n"
+            f"Thrust:    {self.propeller.performance['thrust']:.2f} N\n"
             f"Rotor mass:{self.propeller.mass * 1000:.1f} g\n"
         )
         if self.feasible_motors:
@@ -304,4 +307,3 @@ class PropulsionSystem(Base):
                 f"KV:        {motor.kv} RPM/V\n"
                 f"Efficiency:{motor.efficiency:.1%}\n"
             )
-        return opt

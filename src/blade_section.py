@@ -108,11 +108,11 @@ class BladeSection(Base):
             self.target_thrust / (2.0 * self.air_density * self.disk_area)
         )
         v_theta    = 0.0
-        relaxation = 0.1
-        tolerance  = 1e-5
-        n_iter     = 500
+        relaxation = 0.3  # was 0.1 — more aggressive relaxation
+        tolerance  = 1e-4  # was 1e-5 — slightly looser tolerance
+        n_iter     = 100  # 500 is overkill if it's diverging anyway, put at 100 for testing now
         dT, dQ     = 0.0, 0.0
-
+        v_theta_new = 0.0
         converged = False
         for _ in range(n_iter):
 
@@ -153,12 +153,11 @@ class BladeSection(Base):
                            * self.air_density * F * self.dr)
             )
 
-            # Domain Protection: guard against division by zero in swirl
-            if v_i_new > 0:
-                v_theta_new = (dQ / (4.0 * math.pi * self.radius ** 2
-                               * self.air_density * v_i_new * F * self.dr))
-            else:
-                v_theta_new = 0.0
+            # Domain Protection: guard against divergence
+            if not math.isfinite(v_i_new) or v_i_new > 500:
+                # Unphysical result — clamp and break
+                dT, dQ = 0.0, 0.0
+                break
 
             # Convergence check
             if abs(v_i_new - v_i) < tolerance:
@@ -178,16 +177,17 @@ class BladeSection(Base):
 
         return {"dT": dT, "dQ": dQ}
 
+    @Attribute
+    def airfoil_points(self):
+        """Geometry Rule: airfoil coordinate points from parent propeller."""
+        return self.propeller_ref.airfoil.points
+
     @Part
     def section_curve(self):
-        """
-        Geometry Rule: generates the 3D cross-section curve at this
-        radial station by scaling, rotating and translating the airfoil.
-        """
         return TranslatedShape(
             RotatedShape(
                 ScaledShape(
-                    FittedCurve(points=self.propeller_ref.airfoil.points),
+                    FittedCurve(points=self.airfoil_points),  # ← use attribute
                     scale_factor=self.chord
                 ),
                 angle=self.pitch,
