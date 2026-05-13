@@ -52,10 +52,18 @@ class BladeSection(Base):
         return (p.diameter / 2) / (p.n_segments - 1)
 
     @Attribute
+    def effective_radius(self):
+        """Geometry Rule: clamp radius to the valid spline domain [hub, tip]."""
+        p = self.propeller_ref
+        r_tip = p.diameter / 2
+        return max(p.hub_radius, min(self.radius, r_tip))
+
+    @Attribute
     def chord(self):
         """Geometry Rule: local chord from propeller chord spline [m]."""
         c_spline, _ = self.propeller_ref.splines
-        chord = float(c_spline(self.radius))
+        r_eval = self.effective_radius
+        chord = float(c_spline(r_eval))
         if chord <= 0:
             raise ValueError(
                 f"Chord at radius={self.radius:.3f}m evaluated to {chord:.4f}m. "
@@ -67,7 +75,7 @@ class BladeSection(Base):
     def pitch(self):
         """Geometry Rule: local pitch angle from propeller pitch spline [rad]."""
         _, p_spline = self.propeller_ref.splines
-        return float(p_spline(self.radius))
+        return float(p_spline(self.effective_radius))
 
     @Attribute
     def total_radius(self):

@@ -40,7 +40,7 @@ class PropulsionSystem(Base):
     blade_candidates = Input([2, 3, 4])      # , 5, 6, 7, 8, 9, 10])
 
     #: optional input slot — objective weight for rotor mass [W/kg]
-    mass_weight = Input(40.0)
+    mass_weight = Input(40)
 
     #: optional input slot — max tip speed [m/s]
     tip_speed_max = Input(200.0)
@@ -67,7 +67,7 @@ class PropulsionSystem(Base):
             diameter      = self.diameter,
             rpm           = self.rpm,
             safety_margin = self.specs['safety_margin'],
-            n_segments    = 30
+            n_segments    = 50
         )
 
     def _obj(self, x_norm):
@@ -77,10 +77,12 @@ class PropulsionSystem(Base):
         """
         self.diameter = x_norm[0] / 10.0
         self.rpm      = x_norm[1] * 1000.0
-        p = self.propeller.performance["shaft_power"]
+        power = self.propeller.performance["shaft_power"]
+        mass = self.propeller.mass
+        obj = power
         print(f"   Iter -> D: {self.diameter:.3f}m "
               f"| RPM: {self.rpm:.0f}")
-        return p
+        return obj
 
     def _thrust_constraint(self, x_norm):
         """

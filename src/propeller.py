@@ -51,9 +51,9 @@ class Propeller(Base):
 
     #: optional input slot - geometry limits
     min_chord = Input(0.004)
-    max_chord_fraction = Input(0.20)
+    max_chord_fraction = Input(0.30)
     min_pitch_deg = Input(2.0)
-    max_pitch_deg = Input(35.0)
+    max_pitch_deg = Input(45.0)
 
     #: optional input slot - inner section cutoff (fraction of span)
     root_cutoff_ratio = Input(0.10)
@@ -102,7 +102,7 @@ class Propeller(Base):
         """
         r_hub  = self.hub_radius
         r_tip  = self.diameter / 2
-        r_ctrl = np.linspace(r_hub, r_tip, 9)
+        r_ctrl = np.linspace(r_hub, r_tip, 11)
 
         # Mathematical Rule: uniform induced velocity from 1D momentum theory
         vi    = math.sqrt(
@@ -129,9 +129,9 @@ class Propeller(Base):
 
             f_tip = ((self.n_blades / 2)
                      * (r_tip - r) / max(1e-6, r * math.sin(phi)))
-              F = ((2 / math.pi)
+            F = ((2 / math.pi)
                   * math.acos(max(0.0, min(1.0, math.exp(-f_tip)))))
-              F = max(0.05, F)
+            F = max(0.05, F)
 
             chord = ((8 * math.pi * r * vi ** 2 * F)
                      / (self.n_blades
