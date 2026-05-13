@@ -239,6 +239,8 @@ class PropulsionSystem(Base):
                     "max_current": parse_float(row["max_current_a"]),
                     "resistance" : parse_float(row["resistance_mohm"]),
                     "mass"       : parse_float(row["mass_g"]),
+                    "diameter"   : parse_float(row["diameter_mm"]) / 1000,
+                    "height"     : parse_float(row["height_mm"]) / 1000,
                 })
 
         print(f"DEBUG: Reading from {self.motor_db_path}")
@@ -261,7 +263,9 @@ class PropulsionSystem(Base):
                 resistance  = m["resistance"],
                 mass        = m["mass"],
                 rpm_req     = self.propeller.rpm,
-                torque_req  = self.propeller.total_torque
+                torque_req  = self.propeller.total_torque,
+                motor_D     = m["diameter"],
+                motor_h     = m["height"],
             )
             candidates.append((m["name"], motor))
         return candidates
@@ -313,6 +317,9 @@ class PropulsionSystem(Base):
             rpm_req     = self.propeller.rpm,
             torque_req  = self.propeller.total_torque,
             label       = best_name,
+            motor_D     = best.motor_D,
+            motor_h      = best.motor_h,
+            motor_z_offset = -(self.propeller.hub_height / 2 + best.motor_h / 2),
         )
 
     def generate_report(self):
