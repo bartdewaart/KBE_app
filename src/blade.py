@@ -26,16 +26,27 @@ class Blade(Base):
     #: optional input slot — number of spanwise analysis sections
     n_segments = Input(30)
 
+    #: required input slot — number of blades [-] (forwarded to sections
+    #: so ParaPy tracks changes through the Sequence chain).
+    n_blades = Input()
+
+    #: required input slot — rotational speed [RPM] (forwarded to sections).
+    rpm = Input()
+
     @Part
     def sections(self):
         """
         Configuration Rule: instantiates n_segments BladeSection
         objects spanning from hub to tip. Chord, pitch and radius
         are computed internally by each section via propeller_ref.
+        n_blades and rpm are propagated as Inputs so ParaPy's
+        dependency graph correctly invalidates BEMT on changes.
         """
         return Sequence(
             type=BladeSection,
-            quantify=self.n_segments
+            quantify=self.n_segments,
+            n_blades=self.n_blades,
+            rpm=self.rpm,
         )
 
     @Attribute
@@ -93,16 +104,35 @@ class Blade(Base):
             hidden=True
         )
 
+    @Attribute
+    def health_color(self):
+        """
+        Visual cue: green when the rotor's BEMT ran clean for this
+        design, amber if any section stalled, red if any diverged.
+        Reads parent.aero_health_summary so the colour reacts whenever
+        the design changes.
+        """
+        try:
+            health = self.parent.aero_health_summary
+        except AttributeError:
+            return "ForestGreen"
+        if health["diverged_radii"] or health["non_converged_radii"]:
+            return "Crimson"
+        if health["stalled_radii"]:
+            return "Goldenrod"
+        return "ForestGreen"
+
     @Part
     def rotated_surface(self):
         """
         Geometry Rule: rotates the lofted blade surface by rotation_angle
         around the Z-axis (hub axis) to position this blade in the
-        full rotor assembly.
+        full rotor assembly. Coloured by aero health.
         """
         return RotatedShape(
             shape_in=self.surface,
             rotation_point=Point(0, 0, 0),
             vector=Vector(0, 0, 1),
-            angle=self.rotation_angle_value
+            angle=self.rotation_angle_value,
+            color=self.health_color,
         )

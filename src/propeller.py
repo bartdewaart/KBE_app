@@ -2,7 +2,7 @@ import math
 
 import numpy as np
 from parapy.core import Base, Input, Attribute, Part, Sequence
-from parapy.geom import Cylinder, Vector
+from parapy.geom import Cylinder, Point, Vector, translate
 from scipy.interpolate import CubicSpline, PchipInterpolator
 
 from .airfoil import Airfoil
@@ -53,10 +53,30 @@ class Propeller(Base):
     min_chord = Input(0.004)
     max_chord_fraction = Input(0.30)
     min_pitch_deg = Input(2.0)
-    max_pitch_deg = Input(45.0)
+    max_pitch_deg = Input(60.0)
 
     #: optional input slot - inner section cutoff (fraction of span)
+    #: sections inboard of this are treated as structural, not aero
     root_cutoff_ratio = Input(0.10)
+
+    #: optional input slot - outer section cutoff (fraction of span)
+    #: sections outboard of this are skipped by BEMT to avoid the
+    #: Prandtl tip-loss singularity (F -> 0)
+    tip_cutoff_ratio = Input(0.02)
+
+    #: optional input slot - fraction of span over which to apply a
+    #: cosine tip-relief that rounds the planform near the tip. Set
+    #: to 0.0 to disable (returns the previous hard-clamped tip);
+    #: 0.15 gives a moderately rounded tip; 0.30 is a pronounced one.
+    tip_relief_ratio = Input(0.15)
+
+    #: optional input slot - print per-section BEMT diagnostic warnings
+    #: keep False during optimization to avoid console flood; toggle
+    #: in the GUI when investigating a specific design
+    verbose = Input(False)
+
+    #: optional input slot - print spline chord-table debug output
+    debug_splines = Input(False)
 
 
     @Part(parse=False)
@@ -97,7 +117,7 @@ class Propeller(Base):
     def splines(self):
         """
         Generative Rule: computes optimal chord and pitch distributions
-        at 5 control points using Betz momentum theory, then fits
+        at 11 control points using Betz momentum theory, then fits
         CubicSpline objects for smooth interpolation across all sections.
         """
         r_hub  = self.hub_radius
@@ -167,8 +187,8 @@ class Propeller(Base):
 
             # Optimum Chord/Pitch Generation
             chord, pitch = _opt_chord_pitch(r)
-            if chord <= self.min_chord:
-                print(f"WARNING: Chord clamped to minimum at r={r:.3f}m "
+            if chord <= self.min_chord and self.debug_splines:
+                print(f"DEBUG: Chord clamped to minimum at r={r:.3f}m "
                       f"(v_eff={v_eff:.3f}, phi={math.degrees(phi):.1f}deg)")
 
             # Inner section transition to structural hub profile
@@ -183,7 +203,23 @@ class Propeller(Base):
             c_ctrl.append(max(self.min_chord, chord))
             p_ctrl.append(pitch)
 
-        if getattr(self, "debug_splines", True):
+        # Cosine tip-relief: replace hard chord clamp at the tip with a
+        # smooth quarter-cosine taper from the chord at r_relief down to
+        # min_chord at r_tip. Only narrows the blade (never widens), so
+        # this is a purely cosmetic / aero-conservative rounding.
+        if self.tip_relief_ratio > 0.0:
+            r_relief = r_tip - self.tip_relief_ratio * (r_tip - r_hub)
+            c_ref = float(np.interp(r_relief, r_ctrl, c_ctrl))
+            span_relief = max(1e-9, r_tip - r_relief)
+            for i, r in enumerate(r_ctrl):
+                if r > r_relief:
+                    t = (r - r_relief) / span_relief
+                    c_relief = (self.min_chord
+                                + (c_ref - self.min_chord)
+                                * math.cos(0.5 * math.pi * t))
+                    c_ctrl[i] = min(c_ctrl[i], c_relief)
+
+        if self.debug_splines:
             print("DEBUG chord control points (r, chord):")
             for r, c in zip(r_ctrl, c_ctrl):
                 print(f"  r={r:.3f} m, c={c:.4f} m")
@@ -203,19 +239,33 @@ class Propeller(Base):
         Rotation angle = index * (2π / n_blades).
         """
         return Sequence(
-        type=Blade,
-        quantify=self.n_blades,
-        n_segments=self.n_segments,
-        rotation_angle=lambda child: child.index * (2 * math.pi / self.n_blades)
-    )
+            type=Blade,
+            quantify=self.n_blades,
+            n_segments=self.n_segments,
+            n_blades=self.n_blades,
+            rpm=self.rpm,
+            rotation_angle=lambda child: child.index
+                                         * (2 * math.pi / self.n_blades),
+        )
 
     @Attribute
     def total_thrust(self):
         """
         Mathematical Rule: total rotor thrust [N].
-        Aggregates blade_thrust from all Blade objects.
+        BladeSection.dT is per-blade; all blades are aerodynamically
+        identical for an axisymmetric hover rotor, so total thrust is
+        n_blades times a single blade's contribution. Using one blade
+        rather than iterating self.blades avoids any dependency on the
+        Sequence re-quantifying when n_blades changes.
+
+        Reflects the clamped/cutoff propeller, not the Betz ideal.
+        Sections inside the root structural blend (radius < r_root) or
+        outside the tip aero cutoff (radius > r_aero_tip) contribute
+        zero — see BladeSection.aerodynamics.
         """
-        thrust = sum(blade.blade_thrust for blade in self.blades)
+        if not self.blades:
+            return 0.0
+        thrust = self.n_blades * self.blades[0].blade_thrust
         if thrust < 0:
             print(
                 f"WARNING: Total thrust is negative ({thrust:.2f} N). "
@@ -228,9 +278,11 @@ class Propeller(Base):
     def total_torque(self):
         """
         Mathematical Rule: total rotor torque [Nm].
-        Aggregates blade_torque from all Blade objects.
+        Same convention as total_thrust — per-blade × n_blades.
         """
-        torque = sum(blade.blade_torque for blade in self.blades)
+        if not self.blades:
+            return 0.0
+        torque = self.n_blades * self.blades[0].blade_torque
         if torque < 0:
             print(
                 f"WARNING: Total torque is negative ({torque:.2f} Nm). "
@@ -253,11 +305,89 @@ class Propeller(Base):
         }
 
     @Attribute
+    def aero_health_summary(self):
+        """
+        Logic Rule: aggregates BEMT health flags across the sections of
+        one representative blade (all blades are aerodynamically
+        identical for an axisymmetric hover rotor). Reactive —
+        recomputes whenever geometry/inputs change.
+
+        Returns counts plus the radii of any problem sections so the
+        user can correlate against the geometry. A section is healthy
+        when BEMT ran (not skipped) and converged without alpha
+        clamping or divergence.
+        """
+        if not self.blades:
+            return {"total_sections": 0, "healthy_count": 0,
+                    "stalled_radii": [], "diverged_radii": [],
+                    "non_converged_radii": [], "skipped_count": 0,
+                    "any_issue": False}
+        stalled, diverged, non_converged = [], [], []
+        skipped = 0
+        healthy = 0
+        total   = 0
+        for s in self.blades[0].sections:
+            total += 1
+            h = s.aero_health
+            if h["skipped"]:
+                skipped += 1
+                continue
+            is_stalled  = h["alpha_clamped"]
+            is_diverged = h["diverged"]
+            is_nonconv  = h["non_converged"]
+            if is_stalled:  stalled.append(s.radius)
+            if is_diverged: diverged.append(s.radius)
+            if is_nonconv:  non_converged.append(s.radius)
+            if not (is_stalled or is_diverged or is_nonconv):
+                healthy += 1
+        return {
+            "total_sections"     : total,
+            "healthy_count"      : healthy,
+            "stalled_radii"      : stalled,
+            "diverged_radii"     : diverged,
+            "non_converged_radii": non_converged,
+            "skipped_count"      : skipped,
+            "any_issue"          : bool(stalled or diverged or non_converged),
+        }
+
+    @Attribute
+    def spanwise_distribution(self):
+        """
+        Diagnostic Rule: returns the actual clamped propeller geometry
+        the BEMT solver operates on, alongside the resulting per-section
+        thrust and torque. Reactive — recomputes when geometry/inputs
+        change.
+
+        Each row is (radius_m, chord_m, pitch_deg, dT_N, dQ_Nm).
+
+        Note: chord and pitch are read from the propeller spline, which
+        interpolates control points that have already been clamped to
+        [min_chord, max_chord_fraction × r_tip] and
+        [min_pitch_deg, max_pitch_deg]. These are the values that will
+        actually be built — not the unconstrained Betz-optimal design.
+        """
+        if not self.blades:
+            return []
+        rows = []
+        for s in self.blades[0].sections:
+            aero = s.aerodynamics
+            rows.append((
+                s.radius,
+                s.chord,
+                math.degrees(s.pitch),
+                aero["dT"],
+                aero["dQ"],
+            ))
+        return rows
+
+    @Attribute
     def mass(self):
         """
         Mathematical Rule: total rotor mass based on actual blade
-        geometry. Sums cross-sectional volume of each section and
-        applies carbon fibre density.
+        geometry. Computes one representative blade's volume from
+        cross-sectional area × dr summed across its sections, then
+        multiplies by n_blades. Avoids depending on the Sequence
+        re-quantifying when n_blades changes.
         """
         density_material = 1600  # Carbon fibre [kg/m³]
         # Unit-chord airfoil area (x,y) from the generated coordinates.
@@ -269,12 +399,13 @@ class Propeller(Base):
             area_unit += x0 * y1 - x1 * y0
         area_unit = abs(area_unit) * 0.5
 
-        blade_volume = sum(
+        if not self.blades:
+            return 0.0
+        single_blade_volume = sum(
             area_unit * (s.chord ** 2) * s.dr
-            for blade in self.blades
-            for s in blade.sections
+            for s in self.blades[0].sections
         )
-        return blade_volume * density_material
+        return self.n_blades * single_blade_volume * density_material
 
     @Part
     def hub(self):
@@ -286,4 +417,19 @@ class Propeller(Base):
             height=self.hub_height,
             centered=True,
             color="DarkSlateGray"
+        )
+
+    @Part
+    def hub_flange(self):
+        """
+        Geometry Rule: thin flange disc under the hub to suggest a
+        motor mount. Purely visual.
+        """
+        return Cylinder(
+            radius=self.hub_radius * 1.6,
+            height=self.hub_height * 0.25,
+            position=translate(self.position,
+                               "z", -self.hub_height * 0.6),
+            centered=True,
+            color="DimGray",
         )
