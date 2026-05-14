@@ -6,11 +6,16 @@ from parapy.geom import Cylinder, translate, XOY
 
 class ElectricMotor(Base):
     """
-    Represents a candidate electric motor and evaluates
-    whether it can handle the propeller's power requirements.
-    Motor specifications are read from the motor database CSV
-    and operating requirements are passed from PropulsionSystem.
+    Represents a candidate electric motor and evaluates whether it can
+    handle the propeller's power requirements.
+
+    Specifications are read from the motor database CSV and operating
+    requirements are passed from PropulsionSystem.  Feasibility is
+    checked against 80 % of rated current and power to account for
+    thermal derating and modelling uncertainty.
     """
+
+    # ─── Motor specification inputs ──────────────────────────────────────────
 
     #: optional input slot — motor velocity constant [RPM/V]
     kv          = Input(900)
@@ -27,37 +32,45 @@ class ElectricMotor(Base):
     #: optional input slot — motor mass [g]
     mass        = Input(20)
 
+    # ─── Operating-point inputs (set by PropulsionSystem) ────────────────────
+
     #: required input slot — required rotational speed [RPM]
-    rpm_req     = Input()
+    rpm_req    = Input()
 
     #: required input slot — required shaft torque [Nm]
-    torque_req  = Input()
+    torque_req = Input()
 
-    #: optional input slot, motor diameter [m]
+    # ─── Geometry inputs ─────────────────────────────────────────────────────
+
+    #: optional input slot — motor outer diameter [m]
     motor_D = Input(0.04)
 
-    #: optional input slot, motor height [m]
+    #: optional input slot — motor height [m]
     motor_h = Input(0.02)
 
-    #: optional input slot, z-offset of motor to sit below hub [m]
+    #: optional input slot — z-offset so motor sits below hub [m]
     motor_z_offset = Input(0.0)
+
+    # ─── Geometry ────────────────────────────────────────────────────────────
 
     @Part
     def geometry(self):
-        """Geometry Rule: cylindrical motor body positioned below hub."""
+        """Geometry Rule: cylindrical motor body positioned below the hub."""
         return Cylinder(
             radius=self.motor_D / 2 *3,
             height=self.motor_h,
             centered=True,
             position=translate(XOY, 'z', self.motor_z_offset),
-            color="Red"
+            color="Red",
         )
+
+    # ─── Electrical model ────────────────────────────────────────────────────
 
     @Attribute
     def kt(self):
         """
         Mathematical Rule: torque constant [Nm/A].
-        Derived from KV rating — inverse of KV in SI units.
+        Derived from KV rating — inverse of KV in SI units (rad/s per V).
         """
         if self.kv <= 0:
             raise ValueError(
@@ -68,23 +81,17 @@ class ElectricMotor(Base):
 
     @Attribute
     def voltage_required(self):
-        """
-        Mathematical Rule: voltage needed to reach the required RPM [V].
-        """
+        """Mathematical Rule: voltage needed to reach the required RPM [V]."""
         return self.rpm_req / self.kv
 
     @Attribute
     def current_required(self):
-        """
-        Mathematical Rule: current draw estimated from torque constant [A].
-        """
+        """Mathematical Rule: current draw estimated from torque constant [A]."""
         return self.torque_req / self.kt
 
     @Attribute
     def power_required(self):
-        """
-        Mathematical Rule: total electrical power draw [W].
-        """
+        """Mathematical Rule: total electrical power draw [W]."""
         return self.current_required * self.voltage_required
 
     @Attribute
@@ -105,28 +112,33 @@ class ElectricMotor(Base):
             return eta
         return 0.0
 
-    @Attribute
-    def is_feasible(self):
-        """
-        Logic Rule: checks feasibility against rated motor limits.
-        Operating margins set to 80% of rated current and power
-        to account for thermal effects and modelling uncertainties.
-        """
-        current_ok = self.current_required <= 0.8 * self.max_current
-        power_ok   = self.power_required   <= 0.8 * self.max_power
-        return current_ok and power_ok
+    # ─── Feasibility ─────────────────────────────────────────────────────────
 
     @Attribute
     def feasibility_report(self):
         """
-        Logic Rule: returns a detailed feasibility summary showing
-        which constraints pass or fail and by what margin.
-        References is_feasible to avoid duplicating logic.
+        Logic Rule: computes operating margins against rated motor limits.
+        Single source of truth for the feasibility check — is_feasible
+        reads its result rather than replicating the threshold arithmetic.
+        Operating limits are set to 80 % of rated values to account for
+        thermal effects and modelling uncertainties.
         """
+        limit_current = 0.8 * self.max_current
+        limit_power   = 0.8 * self.max_power
+        current_ok    = self.current_required <= limit_current
+        power_ok      = self.power_required   <= limit_power
         return {
-            "is_feasible"    : self.is_feasible,
-            "current_ok"     : self.current_required <= 0.8 * self.max_current,
-            "power_ok"       : self.power_required   <= 0.8 * self.max_power,
-            "current_margin" : 0.8 * self.max_current - self.current_required,
-            "power_margin"   : 0.8 * self.max_power   - self.power_required,
+            "is_feasible"    : current_ok and power_ok,
+            "current_ok"     : current_ok,
+            "power_ok"       : power_ok,
+            "current_margin" : limit_current - self.current_required,
+            "power_margin"   : limit_power   - self.power_required,
         }
+
+    @Attribute
+    def is_feasible(self):
+        """
+        Logic Rule: True when the motor meets both current and power limits.
+        Delegates to feasibility_report to avoid duplicating threshold logic.
+        """
+        return self.feasibility_report["is_feasible"]

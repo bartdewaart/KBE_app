@@ -63,7 +63,13 @@ class BladeSection(Base):
 
     @Attribute
     def effective_radius(self):
-        """Geometry Rule: clamp radius to the valid spline domain [hub, tip]."""
+        """Geometry Rule: clamp radius to the valid spline domain [hub, tip].
+
+        The innermost section (index 0) sits at radius = 0, which lies inside
+        the hub and outside the CubicSpline domain that starts at hub_radius.
+        Clamping prevents the spline from extrapolating to negative or
+        nonsensical chord/pitch values at the blade root.
+        """
         p = self.propeller_ref
         r_tip = p.diameter / 2
         return max(p.hub_radius, min(self.radius, r_tip))

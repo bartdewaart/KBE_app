@@ -86,22 +86,16 @@ class Blade(Base):
             value = value(self)
         return float(value)
 
-    @Part(parse=False)
+    @Part
     def surface(self):
         """
-        Geometry Rule: lofts the section curves into a 3D blade skin.
-        NOTE: all sections must have the same number of points in their
-        FittedCurve for LoftedSurface to work correctly.
+        Geometry Rule: lofts the section curves into the 3D blade skin.
+        Hidden because rotated_surface is the rendered copy in the rotor
+        assembly; this intermediate node exists only for LoftedSurface.
         """
-        if len(self.sections) < 2:
-            raise ValueError(
-                f"LoftedSurface requires at least 2 sections to loft. "
-                f"Got n_segments={self.n_segments}. "
-                f"Increase n_segments to at least 2."
-            )
         return LoftedSurface(
             profiles=[s.section_curve for s in self.sections],
-            hidden=True
+            hidden=True,
         )
 
     @Attribute
