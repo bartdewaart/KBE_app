@@ -1,6 +1,7 @@
 import math
 
-from parapy.core import Base, Input, Attribute
+from parapy.core import Base, Input, Attribute, Part
+from parapy.geom import Cylinder, translate, XOY
 
 
 class ElectricMotor(Base):
@@ -31,6 +32,26 @@ class ElectricMotor(Base):
 
     #: required input slot — required shaft torque [Nm]
     torque_req  = Input()
+
+    #: optional input slot, motor diameter [m]
+    motor_D = Input(0.04)
+
+    #: optional input slot, motor height [m]
+    motor_h = Input(0.02)
+
+    #: optional input slot, z-offset of motor to sit below hub [m]
+    motor_z_offset = Input(0.0)
+
+    @Part
+    def geometry(self):
+        """Geometry Rule: cylindrical motor body positioned below hub."""
+        return Cylinder(
+            radius=self.motor_D / 2 *3,
+            height=self.motor_h,
+            centered=True,
+            position=translate(XOY, 'z', self.motor_z_offset),
+            color="Red"
+        )
 
     @Attribute
     def kt(self):
