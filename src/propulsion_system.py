@@ -621,6 +621,7 @@ class PropulsionSystem(Base):
                     "name"       : row["name"].strip(),
                     "kv"         : parse_float(row["kv"]),
                     "max_power"  : parse_float(row["max_power_w"]),
+                    "max_voltage_lipo": parse_float(row["max_voltage_lipo"]),
                     "max_current": parse_float(row["max_current_a"]),
                     "resistance" : parse_float(row["resistance_mohm"]),
                     "mass"       : parse_float(row["mass_g"]),
@@ -644,6 +645,7 @@ class PropulsionSystem(Base):
             motor = ElectricMotor(
                 kv          = m["kv"],
                 max_power   = m["max_power"],
+                max_voltage_lipo = m["max_voltage_lipo"],
                 max_current = m["max_current"],
                 resistance  = m["resistance"],
                 mass        = m["mass"],
@@ -696,6 +698,7 @@ class PropulsionSystem(Base):
         return ElectricMotor(
             kv          = best.kv,
             max_power   = best.max_power,
+            max_voltage_lipo = best.max_voltage_lipo,
             max_current = best.max_current,
             resistance  = best.resistance,
             mass        = best.mass,
@@ -743,6 +746,8 @@ class PropulsionSystem(Base):
                 f"KV:        {motor.kv} RPM/V\n"
                 f"Efficiency:{motor.efficiency:.1%}\n"
             )
+            print(f"DEBUG motor_D: {motor.motor_D * 1000:.1f}mm")
+            print(f"DEBUG motor_h: {motor.motor_h * 1000:.1f}mm")
             summary["motor_name"] = name
             summary["motor_kv"] = motor.kv
             summary["motor_efficiency"] = motor.efficiency

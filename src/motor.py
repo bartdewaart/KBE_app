@@ -1,4 +1,5 @@
 import math
+from http.client import InvalidURL
 
 from parapy.core import Base, Input, Attribute, Part
 from parapy.geom import Cylinder, translate, XOY
@@ -14,6 +15,9 @@ class ElectricMotor(Base):
 
     #: optional input slot — motor velocity constant [RPM/V]
     kv          = Input(900)
+
+    #: optional input slot, maximum voltage in LiPo cell count [S]
+    max_voltage_lipo = Input(4.0)
 
     #: optional input slot — maximum rated power [W]
     max_power   = Input(500.0)
@@ -46,7 +50,7 @@ class ElectricMotor(Base):
     def geometry(self):
         """Geometry Rule: cylindrical motor body positioned below hub."""
         return Cylinder(
-            radius=self.motor_D / 2 *3,
+            radius=self.motor_D / 2,
             height=self.motor_h,
             centered=True,
             position=translate(XOY, 'z', self.motor_z_offset),
@@ -67,6 +71,11 @@ class ElectricMotor(Base):
         return 1.0 / (self.kv * 2 * math.pi / 60)
 
     @Attribute
+    def max_voltage(self):
+        """Mathematical Rule: maximum rated voltage [V] from LiPo cell count."""
+        return self.max_voltage_lipo * 3.7
+
+    @Attribute
     def voltage_required(self):
         """
         Mathematical Rule: voltage needed to reach the required RPM [V].
@@ -85,7 +94,10 @@ class ElectricMotor(Base):
         """
         Mathematical Rule: total electrical power draw [W].
         """
-        return self.current_required * self.voltage_required
+        shaft_power = self.torque_req * (self.rpm_req * 2 * math.pi / 60)
+        i2r_loss = self.current_required ** 2 * (self.resistance / 1000)
+
+        return shaft_power + i2r_loss
 
     @Attribute
     def efficiency(self):
@@ -97,11 +109,7 @@ class ElectricMotor(Base):
         if self.power_required > 0:
             eta = shaft_power / self.power_required
             if eta > 1.0:
-                print(
-                    f"WARNING: Motor efficiency > 100% ({eta:.2%}). "
-                    f"This indicates torque_req or rpm_req may be incorrect. "
-                    f"Check propeller total_torque output."
-                )
+                print(f"WARNING: Motor efficiency > 100% ({eta:.2%}).")
             return eta
         return 0.0
 
@@ -114,7 +122,8 @@ class ElectricMotor(Base):
         """
         current_ok = self.current_required <= 0.8 * self.max_current
         power_ok   = self.power_required   <= 0.8 * self.max_power
-        return current_ok and power_ok
+        voltage_ok = self.voltage_required <= self.max_voltage
+        return current_ok and power_ok and voltage_ok
 
     @Attribute
     def feasibility_report(self):

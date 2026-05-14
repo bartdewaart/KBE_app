@@ -20,7 +20,6 @@ def load_inputs(file_path):
     specs = {}
     with open(file_path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f, delimiter=";")
-        print(f"DEBUG mission headers: {reader.fieldnames}")
         for row in reader:
             try:
                 specs[row["Parameter"]] = float(row["Value"])
