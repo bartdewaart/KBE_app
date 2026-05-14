@@ -795,6 +795,7 @@ class PropulsionSystem(Base):
                     "name"       : row["name"].strip(),
                     "kv"         : parse_float(row["kv"]),
                     "max_power"  : parse_float(row["max_power_w"]),
+                    "max_voltage_lipo": parse_float(row["max_voltage_lipo"]),
                     "max_current": parse_float(row["max_current_a"]),
                     "resistance" : parse_float(row["resistance_mohm"]),
                     "mass"       : parse_float(row["mass_g"]),
@@ -815,6 +816,7 @@ class PropulsionSystem(Base):
             motor = ElectricMotor(
                 kv          = m["kv"],
                 max_power   = m["max_power"],
+                max_voltage_lipo = m["max_voltage_lipo"],
                 max_current = m["max_current"],
                 resistance  = m["resistance"],
                 mass        = m["mass"],
