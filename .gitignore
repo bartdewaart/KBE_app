@@ -1,2 +1,22 @@
-# Ignore XFOIL generated polar files
-polar_*.txt
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+
+# Generated outputs
+data/output/*
+!data/output/.gitkeep
+polars/polar_*.txt
+*.log
+KBE_PropDesign_dist.zip
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Claude Code local config
+.claude/settings.local.json

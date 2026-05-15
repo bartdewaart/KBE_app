@@ -32,8 +32,24 @@ def load_inputs(file_path):
 
 if __name__ == '__main__':
 
+    print("========================================")
+    print("  UAV Propulsion System Design Tool")
+    print("========================================")
+    print()
+
     # Step 1: load mission specifications from XLSX
-    inputs = load_inputs("./data/input/mission.xlsx")
+    mission_file = "./data/input/mission.xlsx"
+    print(f"Loading mission from: {mission_file}")
+    inputs = load_inputs(mission_file)
+
+    print()
+    print("Mission parameters:")
+    for name, value in inputs.items():
+        print(f"  {name:<25}: {value}")
+    print()
+    print("Running optimization -- this may take 30-60 seconds...")
+    print("========================================")
+    print()
 
     # Step 2: instantiate PropulsionSystem with each spec as a
     # first-class Input slot so the user can edit them in the GUI tree.
