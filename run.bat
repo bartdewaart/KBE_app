@@ -9,9 +9,10 @@ echo ========================================
 echo   UAV Propulsion System Design Tool
 echo ========================================
 echo.
-echo Edit data\input\mission.xlsx to set your mission parameters, then close it.
-echo Press any key when ready...
+echo Opening mission.xlsx — update your parameters, save, and close it.
+echo Then press any key here to start the optimisation...
 echo.
+start "" "data\input\mission.xlsx"
 pause >nul
 .venv\Scripts\python.exe main.py
 echo.

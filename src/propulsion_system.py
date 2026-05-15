@@ -1323,6 +1323,18 @@ class PropulsionSystem(Base):
                      ha="center", va="top", fontsize=9, color="gray")
 
             # Left column — mission inputs
+            # Split airfoil candidates across two lines if the list is long
+            _afs  = self.airfoil_candidates
+            _half = (len(_afs) + 1) // 2   # ceiling half — first line slightly longer
+            _af_rows = (
+                [("Airfoil candidates",
+                  ", ".join(str(a) for a in _afs[:_half])),
+                 ("",
+                  ", ".join(str(a) for a in _afs[_half:]))]
+                if len(_afs) > 4
+                else [("Airfoil candidates",
+                       ", ".join(str(a) for a in _afs))]
+            )
             left_items = [
                 ("MISSION INPUTS", ""),
                 ("Payload mass",          f"{self.payload_mass:.3f} kg"),
@@ -1335,7 +1347,7 @@ class PropulsionSystem(Base):
                 ("Min endurance",         f"{self.min_endurance_min:.1f} min"),
                 ("w_power / w_mass / w_endurance",
                  f"{self.w_power} / {self.w_mass} / {self.w_endurance}"),
-                ("Airfoil candidates",    ", ".join(str(a) for a in self.airfoil_candidates)),
+                *_af_rows,
                 ("Blade candidates",      ", ".join(str(b) for b in self.blade_candidates)),
             ]
 
