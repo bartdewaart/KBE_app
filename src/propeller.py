@@ -278,8 +278,8 @@ class Propeller(Base):
             for i, r in enumerate(r_ctrl):
                 if r > r_relief:
                     t        = (r - r_relief) / span_relief
-                    c_relief = (eff_min_chord
-                                + (c_ref - eff_min_chord)
+                    c_relief = (self.min_chord
+                                + (c_ref - self.min_chord)
                                 * math.cos(0.5 * math.pi * t))
                     c_ctrl[i] = min(c_ctrl[i], c_relief)
 

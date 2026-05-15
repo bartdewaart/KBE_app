@@ -83,7 +83,7 @@ class PropulsionSystem(Base):
     # ─── Search-space inputs ──────────────────────────────────────────────────
 
     #: optional input slot — NACA airfoil candidates to search over
-    airfoil_candidates = Input(["4412"])
+    airfoil_candidates = Input(["4412", "2412", "6412", "4409", "4415", "0012", "0009"])
 
     #: optional input slot — blade count candidates to search over
     blade_candidates = Input([2, 3, 4])
@@ -257,12 +257,15 @@ class PropulsionSystem(Base):
             from tkinter import messagebox
             root = tk.Tk()
             root.withdraw()
+            root.attributes("-topmost", True)
+            root.lift()
+            root.focus_force()
             if kind == "info":
-                messagebox.showinfo(title=title, message=message)
+                messagebox.showinfo(title=title, message=message, parent=root)
             elif kind == "error":
-                messagebox.showerror(title=title, message=message)
+                messagebox.showerror(title=title, message=message, parent=root)
             else:
-                messagebox.showwarning(title=title, message=message)
+                messagebox.showwarning(title=title, message=message, parent=root)
             root.destroy()
         except Exception:
             pass   # headless / tkinter unavailable — console output already printed
@@ -433,9 +436,9 @@ class PropulsionSystem(Base):
         p_ref = _P_disk * self.n_rotors / self._SYSTEM_ETA_REF
         self._bat_cap_Wh = (p_ref * self.min_endurance_min / 60.0
                             ) / max(self.battery_efficiency, 1e-6)
-        print(f"   Battery reference: {p_ref:.0f} W system × "
+        print(f"   Battery reference: {p_ref:.0f} W system x "
               f"{self.min_endurance_min:.1f} min "
-              f"→ {self._bat_cap_Wh:.1f} Wh  "
+              f"-> {self._bat_cap_Wh:.1f} Wh  "
               f"({self._bat_cap_Wh / max(self.battery_energy_density, 1e-6) * 1000:.0f} g)")
 
         constraints = [
@@ -449,7 +452,7 @@ class PropulsionSystem(Base):
             method      = "SLSQP",
             bounds      = bounds_norm,
             constraints = constraints,
-            options     = {"ftol": 1e-3, "eps": 1e-2, "maxiter": 60},
+            options     = {"ftol": 1e-2, "eps": 1e-2, "maxiter": 60},
         )
 
         if not res.success:
@@ -1063,7 +1066,7 @@ class PropulsionSystem(Base):
         self.tip_speed_max          = 200.0
         self.air_density            = 1.225
         self.initial_tip_speed      = 65.0
-        self.airfoil_candidates     = ["4412"]
+        self.airfoil_candidates     = ["4412", "2412", "6412", "4409", "4415", "0012", "0009"]
         self.blade_candidates       = [2, 3, 4]
         print("Inputs restored to defaults. Run Re-run optimization to refresh.")
 
