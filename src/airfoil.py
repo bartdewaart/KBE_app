@@ -37,6 +37,8 @@ class Airfoil(Base):
         os.makedirs(polars_dir, exist_ok=True)
         polar_file = os.path.join(polars_dir, f"polar_{self.naca_code}_{int(self.reynolds)}.txt")
 
+        polar_filename = os.path.basename(polar_file)
+
         if not os.path.exists(polar_file):
             commands = (
                 f"NACA {self.naca_code}\n"
@@ -45,7 +47,7 @@ class Airfoil(Base):
                 f"VISC {self.reynolds}\n"
                 "ITER 200\n"
                 "PACC\n"
-                f"{polar_file}\n\n"
+                f"{polar_filename}\n\n"
                 f"ASEQ -5 20 0.5\n"
                 "PACC\n"
                 "QUIT\n"
@@ -56,7 +58,8 @@ class Airfoil(Base):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                cwd=polars_dir,
             )
             process.communicate(commands)
 
