@@ -97,6 +97,12 @@ class Propeller(Base):
     #: material dropdown flows through to both mass attributes here.
     material_density = Input(1600)
 
+    #: optional input slot — Young's modulus [Pa] for structural analysis
+    material_E = Input(60e9)
+
+    #: optional input slot — ultimate tensile strength [Pa] for structural analysis
+    material_sigma_ult = Input(600e6)
+
     #: optional input slot — BEMT under-relaxation factor [-]
     bemt_relaxation = Input(0.3)
 
@@ -443,6 +449,87 @@ class Propeller(Base):
             for s in self.blades[0].sections
         )
         return self.n_blades * single_blade_volume * density_material
+
+    @Attribute
+    def structural_analysis(self):
+        """Generative Rule: Euler-Bernoulli cantilever model for one blade.
+        Returns flap-bending stress, centrifugal tension, FoS, and tip deflection."""
+        if not self.blades:
+            return {}
+        sections = self.blades[0].sections
+        N = len(sections)
+        if N < 2:
+            return {}
+
+        E         = self.material_E
+        sigma_ult = self.material_sigma_ult
+        rho       = self.material_density
+        omega     = self.rpm * 2.0 * math.pi / 60.0
+
+        # ── Unit-chord airfoil geometry via Green's theorem ───────────────
+        pts   = [(p[0], p[1]) for p in self.airfoil.points]
+        n_pts = len(pts)
+        area_unit, I_unit = 0.0, 0.0
+        for i in range(n_pts):
+            x0, y0 = pts[i]
+            x1, y1 = pts[(i + 1) % n_pts]
+            area_unit += x0 * y1 - x1 * y0
+            I_unit    += (x0 - x1) * (y0 + y1) * (y0**2 + y0 * y1 + y1**2)
+        area_unit  = abs(area_unit) * 0.5
+        I_unit     = abs(I_unit) / 12.0
+        y_max_unit = max(abs(p[1]) for p in pts)
+
+        # ── Per-section arrays ────────────────────────────────────────────
+        radii  = [s.radius for s in sections]
+        chords = [s.chord  for s in sections]
+        dT     = [s.aerodynamics["dT"] for s in sections]
+        dr     = sections[0].dr
+
+        I_sec  = [I_unit    * c**4 for c in chords]
+        y_max  = [y_max_unit * c   for c in chords]
+        A_sec  = [area_unit  * c**2 for c in chords]
+
+        # ── Bending moment (tip-to-root suffix sums) ──────────────────────
+        S1, S2 = [0.0] * N, [0.0] * N
+        for i in range(N - 2, -1, -1):
+            S1[i] = S1[i + 1] + dT[i + 1] * radii[i + 1]
+            S2[i] = S2[i + 1] + dT[i + 1]
+        M = [max(0.0, S1[i] - radii[i] * S2[i]) for i in range(N)]
+
+        # ── Centrifugal tension (suffix sum of outboard mass x omega^2 x r) ──
+        cf     = [rho * omega**2 * radii[j] * area_unit * chords[j]**2 * dr
+                  for j in range(N)]
+        F_cent = [0.0] * N
+        F_cent[N - 1] = cf[N - 1]
+        for i in range(N - 2, -1, -1):
+            F_cent[i] = F_cent[i + 1] + cf[i]
+        sigma_cent = [F_cent[i] / max(A_sec[i], 1e-12) for i in range(N)]
+
+        # ── Stresses and factor of safety ─────────────────────────────────
+        sigma_bend  = [M[i] * y_max[i] / max(I_sec[i], 1e-20) for i in range(N)]
+        sigma_total = [sigma_bend[i] + sigma_cent[i] for i in range(N)]
+        FoS         = [sigma_ult / max(s, 1e-9) for s in sigma_total]
+
+        # ── Tip deflection (forward Euler-Bernoulli integration) ──────────
+        theta, delta = [0.0] * N, [0.0] * N
+        for i in range(N - 1):
+            EI         = E * max(I_sec[i], 1e-20)
+            theta[i+1] = theta[i] + M[i] / EI * dr
+            delta[i+1] = delta[i] + theta[i] * dr
+
+        idx_min = FoS.index(min(FoS))
+        return {
+            "radii"            : radii,
+            "sigma_bend"       : sigma_bend,
+            "sigma_cent"       : sigma_cent,
+            "sigma_total"      : sigma_total,
+            "FoS"              : FoS,
+            "delta"            : delta,
+            "tip_deflection_m" : delta[-1],
+            "min_FoS"          : FoS[idx_min],
+            "critical_radius_m": radii[idx_min],
+            "sigma_ult"        : sigma_ult,
+        }
 
     # ─── Hub geometry ────────────────────────────────────────────────────────
 

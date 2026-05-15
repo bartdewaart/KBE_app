@@ -56,6 +56,10 @@ class PropulsionSystem(Base):
     #: w_endurance then pushes the optimizer above this floor.
     min_endurance_min = Input(10.0)
 
+    #: optional input slot — minimum structural factor of safety [-]
+    #: used to flag designs where blade stress exceeds material limits
+    structural_fos_min = Input(2.0)
+
     #: optional input slot — battery energy budget [Wh]; set by optimiser.
     #: Do not edit manually — run Re-run optimization to update.
     battery_capacity_Wh = Input(0.0)
@@ -126,6 +130,13 @@ class PropulsionSystem(Base):
         "PLA"         : 1240,
     }
 
+    _MATERIAL_MECHANICS = {   # E [Pa], sigma_ult [Pa]
+        "Carbon Fibre": {"E": 60e9,  "sigma_ult": 600e6},
+        "Fibreglass"  : {"E": 20e9,  "sigma_ult": 200e6},
+        "Aluminium"   : {"E": 70e9,  "sigma_ult": 270e6},
+        "PLA"         : {"E":  3.5e9, "sigma_ult":  60e6},
+    }
+
     # Normalization denominators for the three-term objective.
     # A design exactly at these values contributes 1.0 per unit weight.
     # Values represent order-of-magnitude upper bounds for a small UAV.
@@ -187,6 +198,16 @@ class PropulsionSystem(Base):
             )
 
     @Attribute
+    def material_E(self):
+        """Logic Rule: Young's modulus [Pa] for the selected propeller_material."""
+        return self._MATERIAL_MECHANICS[self.propeller_material]["E"]
+
+    @Attribute
+    def material_sigma_ult(self):
+        """Logic Rule: ultimate tensile strength [Pa] for the selected propeller_material."""
+        return self._MATERIAL_MECHANICS[self.propeller_material]["sigma_ult"]
+
+    @Attribute
     def payload_weight_per_rotor(self):
         """
         Mathematical Rule: payload weight carried by each rotor [N].
@@ -229,15 +250,17 @@ class PropulsionSystem(Base):
         """Configuration Rule: Propeller wired to the active design point.
         parse=False defers XFOIL evaluation until after the first optimisation run."""
         return Propeller(
-            base_thrust      = self.payload_weight_per_rotor,
-            diameter         = self.diameter,
-            rpm              = self.rpm,
-            n_blades         = self.n_blades,
-            airfoil_type     = self.airfoil_type,
-            safety_margin    = self.safety_margin,
-            n_segments       = 50,
-            material_density = self.material_density,
-            air_density      = self.air_density,
+            base_thrust        = self.payload_weight_per_rotor,
+            diameter           = self.diameter,
+            rpm                = self.rpm,
+            n_blades           = self.n_blades,
+            airfoil_type       = self.airfoil_type,
+            safety_margin      = self.safety_margin,
+            n_segments         = 50,
+            material_density   = self.material_density,
+            material_E         = self.material_E,
+            material_sigma_ult = self.material_sigma_ult,
+            air_density        = self.air_density,
         )
 
     # ─── Optimisation helpers ─────────────────────────────────────────────────
@@ -546,6 +569,17 @@ class PropulsionSystem(Base):
                 f"RPM ({self.rpm:.0f}) hit the upper bound (12 000 RPM) — "
                 f"consider increasing tip_speed_max."
             )
+        try:
+            sa = self.propeller.structural_analysis
+            if sa and sa["min_FoS"] < self.structural_fos_min:
+                issues.append(
+                    f"Structural FoS = {sa['min_FoS']:.2f} at "
+                    f"r = {sa['critical_radius_m'] * 1000:.0f} mm "
+                    f"(minimum allowed: {self.structural_fos_min:.1f}). "
+                    f"Consider: stiffer material, larger chord, or fewer blades."
+                )
+        except Exception:
+            pass
         if issues:
             self._show_popup(
                 title="Design Warnings",
@@ -1121,6 +1155,64 @@ class PropulsionSystem(Base):
             return
         plt.show()
 
+    def _build_structural_fig(self, figsize=(7, 8)):
+        """Build and return the 3-panel structural analysis figure, or None if no data."""
+        import matplotlib.pyplot as plt
+        sa = self.propeller.structural_analysis
+        if not sa:
+            return None
+        r              = sa["radii"]
+        sig_bend_mpa   = [v / 1e6 for v in sa["sigma_bend"]]
+        sig_total_mpa  = [v / 1e6 for v in sa["sigma_total"]]
+        fos            = sa["FoS"]
+        delta_mm       = [v * 1000 for v in sa["delta"]]
+        sig_ult_mpa    = sa["sigma_ult"] / 1e6
+
+        fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True)
+
+        axes[0].plot(r, sig_bend_mpa,  marker=".", label="Bending")
+        axes[0].plot(r, sig_total_mpa, marker=".", label="Total (+ centrifugal)", color="tab:red")
+        axes[0].axhline(sig_ult_mpa, color="crimson", linestyle="--", linewidth=1.0,
+                        label=f"sigma_ult ({sig_ult_mpa:.0f} MPa)")
+        axes[0].set_ylabel("Stress [MPa]")
+        axes[0].set_ylim(bottom=0)
+        axes[0].legend(fontsize=7, loc="upper right")
+        axes[0].grid(True, alpha=0.3)
+
+        axes[1].plot(r, fos, marker=".", color="tab:green")
+        axes[1].axhline(self.structural_fos_min, color="orange", linestyle="--", linewidth=1.0,
+                        label=f"min FoS = {self.structural_fos_min}")
+        axes[1].set_ylabel("Factor of Safety [-]")
+        axes[1].set_ylim(bottom=0)
+        axes[1].legend(fontsize=7)
+        axes[1].grid(True, alpha=0.3)
+
+        axes[2].plot(r, delta_mm, marker=".", color="tab:purple")
+        axes[2].set_ylabel("Deflection [mm]")
+        axes[2].set_xlabel("radius [m]")
+        axes[2].grid(True, alpha=0.3)
+
+        min_fos = sa["min_FoS"]
+        r_crit  = sa["critical_radius_m"]
+        tip_mm  = sa["tip_deflection_m"] * 1000
+        fig.suptitle(
+            f"Structural Analysis — NACA {self.airfoil_type} | {self.propeller_material} | "
+            f"min FoS={min_fos:.2f} @ r={r_crit * 1000:.0f}mm | tip d={tip_mm:.1f}mm",
+            fontsize=10
+        )
+        fig.tight_layout()
+        return fig
+
+    @action(label="Plot structural analysis")
+    def plot_structural(self):
+        """GUI Action: Euler-Bernoulli stress, factor of safety, and tip deflection vs span."""
+        import matplotlib.pyplot as plt
+        fig = self._build_structural_fig(figsize=(7, 8))
+        if fig is None:
+            print("No structural analysis data available.")
+            return
+        plt.show()
+
     @action(label="Export STEP files")
     def export_step(self):
         """
@@ -1383,6 +1475,12 @@ class PropulsionSystem(Base):
             fig.tight_layout()
             pdf.savefig(fig, bbox_inches="tight")
             plt.close(fig)
+
+            # ── Page 6: Structural analysis ───────────────────────────────
+            fig = self._build_structural_fig(figsize=(8.27, 10))
+            if fig is not None:
+                pdf.savefig(fig, bbox_inches="tight")
+                plt.close(fig)
 
         print(f"PDF report exported to {path}")
         self._show_popup("PDF Exported", f"Report saved to:\n{path}", kind="info")
