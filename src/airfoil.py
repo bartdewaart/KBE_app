@@ -33,7 +33,9 @@ class Airfoil(Base):
         and produces corrupt polars. This is the only side effect in
         this attribute and is unavoidable given XFOIL's file-based I/O.
         """
-        polar_file = f"polar_{self.naca_code}_{int(self.reynolds)}.txt"
+        polars_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "polars")
+        os.makedirs(polars_dir, exist_ok=True)
+        polar_file = os.path.join(polars_dir, f"polar_{self.naca_code}_{int(self.reynolds)}.txt")
 
         if not os.path.exists(polar_file):
             commands = (
