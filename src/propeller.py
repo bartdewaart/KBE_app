@@ -99,6 +99,29 @@ class Propeller(Base):
 
     # ─── Airfoil ─────────────────────────────────────────────────────────────
 
+    @Attribute
+    def representative_reynolds(self):
+        """
+        Estimated Re at 75% span for XFOIL polar generation.
+
+        Uses V_eff(75% span) and the min-chord floor as a conservative chord
+        estimate — the floor avoids circularity (polar not yet known).
+        Rounded to the nearest 50 000 so small optimizer steps in diameter or
+        RPM don't invalidate the cached polar and re-trigger XFOIL.
+        """
+        r_tip  = self.diameter / 2
+        r_75   = self.hub_radius + 0.75 * (r_tip - self.hub_radius)
+        omega  = self.rpm * 2 * math.pi / 60
+        vi     = math.sqrt(
+            max(self.design_thrust, 1e-6)
+            / (2 * self.air_density * math.pi * max(r_tip ** 2, 1e-9))
+        )
+        v_eff  = math.sqrt(vi ** 2 + (omega * r_75) ** 2)
+        chord  = max(self.min_chord, self.min_chord_fraction * (r_tip - self.hub_radius))
+        nu     = 1.5e-5   # kinematic viscosity of air at ~20 °C [m²/s]
+        re     = v_eff * chord / nu
+        return max(50000, round(re / 50000) * 50000)
+
     @Part(parse=False)
     def airfoil(self):
         """
@@ -108,7 +131,7 @@ class Propeller(Base):
         """
         return Airfoil(
             naca_code=self.airfoil_type,
-            reynolds=300000,
+            reynolds=self.representative_reynolds,
         )
 
     # ─── Design mass / thrust targets ────────────────────────────────────────

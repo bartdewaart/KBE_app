@@ -1,10 +1,27 @@
 import math
 import os
+import shutil
 import subprocess
 
 import numpy as np
 from parapy.core import Base, Input, Attribute
 from scipy.interpolate import interp1d
+
+
+def _find_xfoil():
+    """Resolve the XFOIL executable: PATH first, then project root."""
+    exe = shutil.which("xfoil")
+    if exe:
+        return exe
+    local = os.path.join(os.path.dirname(os.path.dirname(__file__)), "xfoil.exe")
+    if os.path.exists(local):
+        return local
+    raise RuntimeError(
+        "XFOIL executable not found.\n"
+        "Options:\n"
+        "  1. Add the folder containing xfoil.exe to your system PATH\n"
+        "  2. Copy xfoil.exe into the project root (next to main.py)"
+    )
 
 
 class Airfoil(Base):
@@ -54,7 +71,7 @@ class Airfoil(Base):
             )
 
             process = subprocess.Popen(
-                "xfoil",
+                _find_xfoil(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
