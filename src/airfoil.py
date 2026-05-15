@@ -94,8 +94,18 @@ class Airfoil(Base):
         cls    = [unique_points[a][0] for a in alphas]
         cds    = [unique_points[a][1] for a in alphas]
 
-        # Mathematical Rule: find optimal L/D operating point
-        l_over_d = [cl / max(cd, 1e-6) for cl, cd in zip(cls, cds)]
+        # Mathematical Rule: find optimal L/D operating point.
+        # Restrict search to the pre-stall regime (alpha <= alpha at CL_max).
+        # XFOIL can produce anomalously low Cd near/post stall due to
+        # convergence failure, which would otherwise cause argmax to select
+        # a stalled alpha as "optimal" — leading to over-pitched Betz blades.
+        idx_clmax = int(np.argmax(cls))
+        l_over_d = []
+        for i, (cl, cd) in enumerate(zip(cls, cds)):
+            if i <= idx_clmax and cl > 0 and cd > 0:
+                l_over_d.append(cl / cd)
+            else:
+                l_over_d.append(-1.0)
         idx = int(np.argmax(l_over_d))
 
         # Scipy Integration: build interpolators for BEM solver

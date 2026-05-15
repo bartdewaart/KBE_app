@@ -134,12 +134,16 @@ class ElectricMotor(Base):
         limit_power   = 0.8 * self.max_power
         current_ok    = self.current_required <= limit_current
         power_ok      = self.power_required   <= limit_power
+        current_margin_A   = limit_current - self.current_required
+        current_margin_pct = current_margin_A / max(limit_current, 1e-6)
+        marginal = current_ok and current_margin_pct < 0.10
         return {
             "is_feasible"    : current_ok and power_ok,
             "current_ok"     : current_ok,
             "power_ok"       : power_ok,
-            "current_margin" : limit_current - self.current_required,
+            "current_margin" : current_margin_A,
             "power_margin"   : limit_power   - self.power_required,
+            "marginal"       : marginal,
         }
 
     @Attribute

@@ -45,10 +45,10 @@ if __name__ == '__main__':
         propeller_material     = str(inputs["propeller_material"]),
         battery_energy_density = float(inputs["battery_energy_density"]),
         battery_efficiency     = float(inputs["battery_efficiency"]),
-        target_endurance_min   = float(inputs["target_endurance_min"]),
-        w_power                = float(inputs["w_power"]),
-        w_mass                 = float(inputs["w_mass"]),
-        w_endurance            = float(inputs["w_endurance"]),
+        min_endurance_min      = float(inputs["min_endurance_min"]),
+        w_power                = float(inputs.get("w_power",    0.5)),
+        w_mass                 = float(inputs.get("w_mass",     0.0)),
+        w_endurance            = float(inputs.get("w_endurance", 0.5)),
     )
 
     # Step 3: initial optimization. Inside the GUI the user can edit

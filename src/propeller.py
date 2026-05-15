@@ -62,6 +62,11 @@ class Propeller(Base):
 
     #: optional input slot — geometry limits
     min_chord = Input(0.004)
+    #: optional input slot — minimum chord as a fraction of blade span [r_tip − r_hub].
+    #: Prevents the Betz formula from collapsing chord to the absolute min_chord
+    #: at high RPM.  Effective minimum = max(min_chord, min_chord_fraction × span).
+    #: 0.10 gives ~18 mm for a 0.4 m prop — close to real DJI-class chord widths.
+    min_chord_fraction = Input(0.10)
     max_chord_fraction = Input(0.30)
     min_pitch_deg = Input(2.0)
     max_pitch_deg = Input(60.0)
@@ -171,6 +176,8 @@ class Propeller(Base):
         min_pitch = math.radians(self.min_pitch_deg)
         max_pitch = math.radians(self.max_pitch_deg)
         max_chord = max(self.min_chord, self.max_chord_fraction * r_tip)
+        # Span-relative minimum chord prevents Betz formula from collapsing at high RPM.
+        eff_min_chord = max(self.min_chord, self.min_chord_fraction * (r_tip - r_hub))
 
         def _opt_chord_pitch(r):
             """Return Betz-optimal (chord, pitch) at radial station r."""
@@ -189,11 +196,11 @@ class Propeller(Base):
                    * math.cos(phi))
             )
             if not math.isfinite(chord) or chord <= 0:
-                chord = self.min_chord
+                chord = eff_min_chord
 
             pitch = phi + self.airfoil.polar_data["alpha_opt_rad"]
             pitch = max(min_pitch, min(max_pitch, pitch))
-            chord = max(self.min_chord, min(max_chord, chord))
+            chord = max(eff_min_chord, min(max_chord, chord))
             return chord, pitch
 
         # Hub-to-root structural blend: fix chord/pitch at hub face and
@@ -201,14 +208,14 @@ class Propeller(Base):
         root_cutoff = max(0.0, min(0.6, self.root_cutoff_ratio))
         r_root      = r_hub + root_cutoff * (r_tip - r_hub)
         root_chord, root_pitch = _opt_chord_pitch(r_root)
-        chord_hub   = min(max_chord, max(self.min_chord, 2.0 * self.hub_radius))
+        chord_hub   = min(max_chord, max(eff_min_chord, 2.0 * self.hub_radius))
         pitch_hub   = max(root_pitch, min_pitch)
 
         c_ctrl, p_ctrl = [], []
         for r in r_ctrl:
             chord, pitch = _opt_chord_pitch(r)
 
-            if self.debug_splines and chord <= self.min_chord:
+            if self.debug_splines and chord <= eff_min_chord:
                 # Recompute phi/v_eff locally — only needed for the message.
                 phi   = math.atan2(vi, omega * r)
                 v_eff = math.sqrt(vi ** 2 + (omega * r) ** 2)
@@ -222,7 +229,7 @@ class Propeller(Base):
                 chord = chord_hub + t * (root_chord - chord_hub)
                 pitch = pitch_hub + t * (root_pitch - pitch_hub)
 
-            c_ctrl.append(max(self.min_chord, chord))
+            c_ctrl.append(max(eff_min_chord, chord))
             p_ctrl.append(pitch)
 
         # ── Cosine tip-relief ──────────────────────────────────────────────
@@ -236,8 +243,8 @@ class Propeller(Base):
             for i, r in enumerate(r_ctrl):
                 if r > r_relief:
                     t        = (r - r_relief) / span_relief
-                    c_relief = (self.min_chord
-                                + (c_ref - self.min_chord)
+                    c_relief = (eff_min_chord
+                                + (c_ref - eff_min_chord)
                                 * math.cos(0.5 * math.pi * t))
                     c_ctrl[i] = min(c_ctrl[i], c_relief)
 
