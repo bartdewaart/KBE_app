@@ -28,6 +28,17 @@ class BladeSection(Base):
     #: same propagation rationale as n_blades.
     rpm = Input()
 
+    #: optional input slot — BEMT under-relaxation factor [-]
+    #: lower values are more stable but converge slower
+    bemt_relaxation = Input(0.3)
+
+    #: optional input slot — BEMT convergence tolerance [m/s]
+    #: iteration stops when both v_i and v_theta change by less than this
+    bemt_tolerance = Input(1e-4)
+
+    #: optional input slot — BEMT maximum iterations [-]
+    bemt_max_iter = Input(100)
+
     @Attribute
     def propeller_ref(self):
         """
@@ -150,9 +161,9 @@ class BladeSection(Base):
             self.target_thrust / (2.0 * self.air_density * self.disk_area)
         )
         v_theta    = 0.0
-        relaxation = 0.3
-        tolerance  = 1e-4
-        n_iter     = 100
+        relaxation = self.bemt_relaxation
+        tolerance  = self.bemt_tolerance
+        n_iter     = self.bemt_max_iter
         dT, dQ     = 0.0, 0.0
         converged = False
         alpha_clamped = False

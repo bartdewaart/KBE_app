@@ -109,6 +109,14 @@ class PropulsionSystem(Base):
     #: optional input slot — speed of sound [m/s]
     speed_of_sound = Input(343.0)
 
+    #: optional input slot — air density [kg/m³]
+    #: propagated to Propeller and BladeSection; adjust for altitude
+    air_density = Input(1.225)
+
+    #: optional input slot — target tip speed for the SLSQP starting point [m/s]
+    #: sets the initial RPM guess; 60–80 m/s is the efficient hover range for small rotors
+    initial_tip_speed = Input(65.0)
+
     # ─── Derived mission quantities ───────────────────────────────────────────
 
     _MATERIAL_DENSITIES = {   # kg/m³
@@ -123,6 +131,14 @@ class PropulsionSystem(Base):
     # Values represent order-of-magnitude upper bounds for a small UAV.
     _P_REF = 500.0   # W   — reference shaft power
     _M_REF = 0.100   # kg  — reference single-rotor blade mass
+
+    # Fallback motor efficiency when no feasible motor has been selected yet.
+    # Used during SLSQP iterations before motor selection is resolved.
+    _DEFAULT_MOTOR_ETA = 0.85
+
+    # Reference system efficiency (prop + motor) used to size the battery
+    # and estimate shaft power from ideal actuator-disk power.
+    _SYSTEM_ETA_REF = 0.65
 
     @Attribute
     def objective_weight_check(self):
@@ -202,7 +218,8 @@ class PropulsionSystem(Base):
     def total_electrical_power(self):
         """Mathematical Rule: total electrical power draw across all rotors [W]."""
         shaft_total = self.propeller.performance["shaft_power"] * self.n_rotors
-        eta_motor   = self.best_motor[1].efficiency if self.feasible_motors else 0.85
+        eta_motor   = (self.best_motor[1].efficiency
+                       if self.feasible_motors else self._DEFAULT_MOTOR_ETA)
         return shaft_total / max(eta_motor, 1e-3)
 
     # ─── Propeller part ───────────────────────────────────────────────────────
@@ -227,6 +244,7 @@ class PropulsionSystem(Base):
             safety_margin    = self.safety_margin,
             n_segments       = 50,
             material_density = self.material_density,
+            air_density      = self.air_density,
         )
 
     # ─── Optimisation helpers ─────────────────────────────────────────────────
@@ -313,13 +331,13 @@ class PropulsionSystem(Base):
         m_norm = m / self._M_REF
 
         # Actual endurance from the fixed battery budget: lower P → longer flight.
-        # Divide by total electrical power (shaft → electrical via motor eta = 0.85).
+        # Divide by total electrical power (shaft → electrical via motor eta fallback).
         # Using shaft power directly would overestimate endurance by ~18%.
         # e_norm = 1.0 at the floor; > 1.0 when the design beats the minimum.
         actual_end = 0.0
         bat_cap = getattr(self, "_bat_cap_Wh", 0.0)
         if bat_cap > 0:
-            p_electrical = p * max(self.n_rotors, 1) / 0.85   # 0.85 ≈ typical motor eta
+            p_electrical = p * max(self.n_rotors, 1) / self._DEFAULT_MOTOR_ETA
             actual_end = 60.0 * bat_cap * self.battery_efficiency / max(p_electrical, 1e-6)
             e_norm = actual_end / max(self.min_endurance_min, 1.0)
         else:
@@ -389,7 +407,7 @@ class PropulsionSystem(Base):
         # computed at the *initial* diameter's radius (max_diameter/4), not the
         # full max_diameter's radius — using max_diameter/2 was a bug that gave
         # half the intended tip speed at x0, starting SLSQP far from feasible.
-        _tip_speed_init = 65.0                       # m/s — target hover tip speed
+        _tip_speed_init = self.initial_tip_speed     # m/s — target hover tip speed
         _x0_radius      = self.max_diameter / 4      # radius at x0 diameter (D=max/2)
         _omega_init     = _tip_speed_init / _x0_radius
         _rpm_init       = _omega_init * 60.0 / (2.0 * math.pi)
@@ -411,8 +429,8 @@ class PropulsionSystem(Base):
         # has no guaranteed feasible interior point from an arbitrary x0.
         _T_ref = self.payload_mass * 9.81 / max(self.n_rotors, 1)
         _A_ref = math.pi * (self.max_diameter / 2) ** 2
-        _P_disk = _T_ref ** 1.5 / math.sqrt(2 * 1.225 * max(_A_ref, 1e-6))
-        p_ref = _P_disk * self.n_rotors / 0.65   # realistic shaft power reference
+        _P_disk = _T_ref ** 1.5 / math.sqrt(2 * self.air_density * max(_A_ref, 1e-6))
+        p_ref = _P_disk * self.n_rotors / self._SYSTEM_ETA_REF
         self._bat_cap_Wh = (p_ref * self.min_endurance_min / 60.0
                             ) / max(self.battery_efficiency, 1e-6)
         print(f"   Battery reference: {p_ref:.0f} W system × "
@@ -496,7 +514,7 @@ class PropulsionSystem(Base):
         # than the ideal-disk reference, so using it would under-size the battery.
         actual_shaft = self.propeller.performance["shaft_power"]
         eta_motor    = (self.best_motor[1].efficiency
-                        if self.feasible_motors else 0.85)
+                        if self.feasible_motors else self._DEFAULT_MOTOR_ETA)
         p_elec_actual = actual_shaft * self.n_rotors / max(eta_motor, 1e-3)
         self.battery_capacity_Wh = (
             p_elec_actual * self.min_endurance_min
@@ -953,8 +971,8 @@ class PropulsionSystem(Base):
         if self.max_diameter > 0 and self.n_rotors >= 1:
             _area    = math.pi * (self.max_diameter / 2) ** 2
             _t_rotor = self.payload_mass * 9.81 / self.n_rotors
-            _p_disk  = (_t_rotor ** 1.5) / math.sqrt(2 * 1.225 * max(_area, 1e-6))
-            _p_ref   = _p_disk * self.n_rotors / 0.65   # realistic system reference
+            _p_disk  = (_t_rotor ** 1.5) / math.sqrt(2 * self.air_density * max(_area, 1e-6))
+            _p_ref   = _p_disk * self.n_rotors / self._SYSTEM_ETA_REF
             _bat_est = (_p_ref * self.min_endurance_min / 60.0
                        ) / (self.battery_energy_density
                              * max(self.battery_efficiency, 1e-6))
@@ -1043,6 +1061,8 @@ class PropulsionSystem(Base):
         self.w_mass                 = 0.0
         self.w_endurance            = 0.5
         self.tip_speed_max          = 200.0
+        self.air_density            = 1.225
+        self.initial_tip_speed      = 65.0
         self.airfoil_candidates     = ["4412"]
         self.blade_candidates       = [2, 3, 4]
         print("Inputs restored to defaults. Run Re-run optimization to refresh.")

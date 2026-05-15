@@ -36,6 +36,18 @@ class ElectricMotor(Base):
     #: optional input slot — motor mass [g]
     mass        = Input(20)
 
+    #: optional input slot — fraction of rated current/power used as operating limit [-]
+    #: accounts for thermal derating and modelling uncertainty
+    derating_factor = Input(0.8)
+
+    #: optional input slot — nominal voltage per LiPo cell [V]
+    #: 3.7 V is the standard nominal; use 4.2 for fully-charged, 3.2 for LiFePO4
+    lipo_cell_voltage = Input(3.7)
+
+    #: optional input slot — current headroom fraction below which the operating
+    #: point is flagged as marginal [-]
+    marginal_threshold = Input(0.10)
+
     # ─── Operating-point inputs (set by PropulsionSystem) ────────────────────
 
     #: required input slot — required rotational speed [RPM]
@@ -86,7 +98,7 @@ class ElectricMotor(Base):
     @Attribute
     def max_voltage(self):
         """Mathematical Rule: maximum rated voltage [V] from LiPo cell count."""
-        return self.max_voltage_lipo * 3.7
+        return self.max_voltage_lipo * self.lipo_cell_voltage
 
     @Attribute
     def voltage_required(self):
@@ -130,13 +142,13 @@ class ElectricMotor(Base):
         Operating limits are set to 80 % of rated values to account for
         thermal effects and modelling uncertainties.
         """
-        limit_current = 0.8 * self.max_current
-        limit_power   = 0.8 * self.max_power
+        limit_current = self.derating_factor * self.max_current
+        limit_power   = self.derating_factor * self.max_power
         current_ok    = self.current_required <= limit_current
         power_ok      = self.power_required   <= limit_power
         current_margin_A   = limit_current - self.current_required
         current_margin_pct = current_margin_A / max(limit_current, 1e-6)
-        marginal = current_ok and current_margin_pct < 0.10
+        marginal = current_ok and current_margin_pct < self.marginal_threshold
         return {
             "is_feasible"    : current_ok and power_ok,
             "current_ok"     : current_ok,

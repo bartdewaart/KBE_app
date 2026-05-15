@@ -33,6 +33,15 @@ class Blade(Base):
     #: required input slot — rotational speed [RPM] (forwarded to sections).
     rpm = Input()
 
+    #: optional input slot — BEMT under-relaxation factor (forwarded to sections)
+    bemt_relaxation = Input(0.3)
+
+    #: optional input slot — BEMT convergence tolerance [m/s] (forwarded to sections)
+    bemt_tolerance = Input(1e-4)
+
+    #: optional input slot — BEMT maximum iterations (forwarded to sections)
+    bemt_max_iter = Input(100)
+
     @Part
     def sections(self):
         """
@@ -47,6 +56,9 @@ class Blade(Base):
             quantify=self.n_segments,
             n_blades=self.n_blades,
             rpm=self.rpm,
+            bemt_relaxation=self.bemt_relaxation,
+            bemt_tolerance=self.bemt_tolerance,
+            bemt_max_iter=self.bemt_max_iter,
         )
 
     @Attribute

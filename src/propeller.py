@@ -97,6 +97,19 @@ class Propeller(Base):
     #: material dropdown flows through to both mass attributes here.
     material_density = Input(1600)
 
+    #: optional input slot — BEMT under-relaxation factor [-]
+    bemt_relaxation = Input(0.3)
+
+    #: optional input slot — BEMT convergence tolerance [m/s]
+    bemt_tolerance = Input(1e-4)
+
+    #: optional input slot — BEMT maximum iterations [-]
+    bemt_max_iter = Input(100)
+
+    #: optional input slot — kinematic viscosity of air [m²/s]
+    #: used for representative Reynolds number calculation; 1.5e-5 is standard sea level ~20 °C
+    air_kinematic_viscosity = Input(1.5e-5)
+
     # ─── Airfoil ─────────────────────────────────────────────────────────────
 
     @Attribute
@@ -118,8 +131,7 @@ class Propeller(Base):
         )
         v_eff  = math.sqrt(vi ** 2 + (omega * r_75) ** 2)
         chord  = max(self.min_chord, self.min_chord_fraction * (r_tip - self.hub_radius))
-        nu     = 1.5e-5   # kinematic viscosity of air at ~20 °C [m²/s]
-        re     = v_eff * chord / nu
+        re     = v_eff * chord / self.air_kinematic_viscosity
         return max(50000, round(re / 50000) * 50000)
 
     @Part(parse=False)
@@ -298,6 +310,9 @@ class Propeller(Base):
             n_segments=self.n_segments,
             n_blades=self.n_blades,
             rpm=self.rpm,
+            bemt_relaxation=self.bemt_relaxation,
+            bemt_tolerance=self.bemt_tolerance,
+            bemt_max_iter=self.bemt_max_iter,
             rotation_angle=lambda child: child.index
                                          * (2 * math.pi / self.n_blades),
         )
