@@ -1,5 +1,4 @@
 import math
-from http.client import InvalidURL
 
 from parapy.core import Base, Input, Attribute, Part
 from parapy.geom import Cylinder, translate, XOY

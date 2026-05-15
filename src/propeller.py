@@ -175,22 +175,8 @@ class Propeller(Base):
 
     @Attribute
     def splines(self):
-        """
-        Generative Rule: computes optimal chord and pitch at 11 control
-        points using Betz momentum theory, then fits CubicSpline (chord)
-        and PchipInterpolator (pitch) for smooth spanwise interpolation.
-
-        Control-point recipe:
-        1. Uniform induced velocity from 1-D momentum theory.
-        2. For each r: Prandtl tip-loss factor F; Betz-optimal chord and
-           pitch from inflow angle φ = atan2(v_i, ω r).
-        3. Inboard of r_root: linear blend from a full-chord hub profile
-           to the first aerodynamic section (structural transition).
-        4. Cosine tip-relief post-process: narrow the outermost control
-           points to follow a quarter-cosine from c_ref down to min_chord
-           at the tip.  The post-process only *narrows* (min operator) so
-           it never widens the planform, keeping the design conservative.
-        """
+        """Generative Rule: Betz-optimal chord/pitch at 11 control points → CubicSpline
+        (chord) + PchipInterpolator (pitch). Hub blend inboard, cosine tip taper outboard."""
         r_hub  = self.hub_radius
         r_tip  = self.diameter / 2
         r_ctrl = np.linspace(r_hub, r_tip, 11)

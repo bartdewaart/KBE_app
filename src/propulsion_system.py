@@ -226,15 +226,8 @@ class PropulsionSystem(Base):
 
     @Part(parse=False)
     def propeller(self):
-        """
-        Configuration Rule: Propeller object wired to the active design
-        point.  All four mutable design variables (diameter, rpm, n_blades,
-        airfoil_type) flow through this Part binding so ParaPy correctly
-        invalidates downstream caches when the optimiser mutates them.
-        parse=False defers construction until the optimiser has set the
-        design point — avoids evaluating XFOIL with default values at
-        instantiation time.
-        """
+        """Configuration Rule: Propeller wired to the active design point.
+        parse=False defers XFOIL evaluation until after the first optimisation run."""
         return Propeller(
             base_thrust      = self.payload_weight_per_rotor,
             diameter         = self.diameter,
@@ -291,15 +284,8 @@ class PropulsionSystem(Base):
             self.rpm = new_r
 
     def _evaluate(self, x_norm):
-        """
-        Cached propeller evaluation at the current design point.
-
-        SLSQP calls _obj and _thrust_constraint at the same x; memoising
-        collapses each pair of calls to one BEMT pass.  The cache key uses
-        exact floats — rounding would make SLSQP's finite-difference probes
-        (step ≈ 1.5e-8) hit the same entry, returning zero gradient and
-        causing the optimiser to quit at the starting point.
-        """
+        """Memoised BEMT evaluation. Cache key uses exact floats — rounding would
+        collapse FD probe steps and zero the gradient, stalling the optimiser."""
         self._set_design_point(x_norm)
         key   = (self.diameter, self.rpm,
                  int(self.n_blades), str(self.airfoil_type))
@@ -494,17 +480,8 @@ class PropulsionSystem(Base):
         }
 
     def _apply_best(self, best_res):
-        """
-        Push the globally-optimal design point back onto the model.
-
-        Sets diameter, rpm, airfoil_type and n_blades so all downstream
-        ParaPy Parts and Attributes reflect the optimal design.  Clears
-        the eval cache and lets ParaPy's reactive system propagate the
-        Input changes to the propeller geometry automatically — the GUI
-        viewport refresh relies on the dirty-state propagation that
-        happens naturally after the action returns, not on explicit Python
-        access here.
-        """
+        """Push the optimal design point onto Input slots and size the battery
+        to actual BEMT shaft power (not the ideal-disk reference used in SLSQP)."""
         self.diameter     = best_res["D"]
         self.rpm          = best_res["RPM"]
         self.airfoil_type = best_res["AF"]
@@ -627,21 +604,8 @@ class PropulsionSystem(Base):
     # ─── Main optimisation entry point ────────────────────────────────────────
 
     def run_optimization(self):
-        """
-        Integration Rule: Discrete-Continuous Hybrid Optimisation.
-
-        Outer loop: exhaustive search over (airfoil, blade-count) pairs.
-        Inner loop: SLSQP on (diameter, RPM) to minimise shaft power +
-        mass penalty subject to thrust and tip-speed constraints.
-
-        Implemented as a regular method (not @Attribute) because it
-        intentionally mutates Input slots during the search — a necessary
-        deviation from functional style when coupling ParaPy models to
-        external optimisers.
-
-        Call explicitly from main.py after instantiation; also wired to
-        the "Re-run optimization" GUI action.
-        """
+        """Integration Rule: outer exhaustive search over (airfoil, blade-count) pairs;
+        inner SLSQP on (diameter, RPM). Mutates Input slots — cannot be an @Attribute."""
         val_warnings = self._validate_inputs()
         if val_warnings:
             self._show_popup(
@@ -1097,31 +1061,25 @@ class PropulsionSystem(Base):
         print(f"Design exported to {path}")
         return path
 
-    @action(label="Plot spanwise distribution")
-    def plot_spanwise(self):
-        """
-        GUI Action: matplotlib window showing chord, pitch and sectional
-        thrust/torque distributions along the span.
-        """
+    def _build_spanwise_fig(self, figsize=(7, 8)):
+        """Build and return the 3-panel spanwise distribution figure, or None if no data."""
         import matplotlib.pyplot as plt
         rows = self.propeller.spanwise_distribution
         if not rows:
-            print("No spanwise distribution available.")
-            return
+            return None
         r     = [row[0] for row in rows]
-        chord = [row[1] * 1000 for row in rows]   # mm
-        pitch = [row[2] for row in rows]           # deg
-        dT    = [row[3] for row in rows]           # N per section
-        dQ    = [row[4] * 1000 for row in rows]   # mNm per section
+        chord = [row[1] * 1000 for row in rows]
+        pitch = [row[2] for row in rows]
+        dT    = [row[3] for row in rows]
+        dQ    = [row[4] * 1000 for row in rows]
 
         prop  = self.propeller
         r_hub = prop.hub_radius
         r_tip = prop.diameter / 2
-        r_root = r_hub + prop.root_cutoff_ratio * (r_tip - r_hub)
+        r_root           = r_hub + prop.root_cutoff_ratio * (r_tip - r_hub)
         eff_min_chord_mm = max(prop.min_chord, prop.min_chord_fraction * (r_tip - r_hub)) * 1000
 
-        fig, axes = plt.subplots(3, 1, figsize=(7, 8), sharex=True)
-
+        fig, axes = plt.subplots(3, 1, figsize=figsize, sharex=True)
         axes[0].plot(r, chord, marker=".")
         axes[0].set_ylabel("chord [mm]")
         axes[0].set_ylim(bottom=0)
@@ -1139,8 +1097,7 @@ class PropulsionSystem(Base):
 
         axes[2].plot(r, dT, marker=".", label="dT [N]")
         axes[2].plot(r, dQ, marker=".", label="dQ [mNm]", color="tab:red")
-        axes[2].axvline(r_root, color="gray", linestyle="--", linewidth=1.0,
-                        label="aero start")
+        axes[2].axvline(r_root, color="gray", linestyle="--", linewidth=1.0, label="aero start")
         axes[2].set_ylabel("section load")
         axes[2].set_xlabel("radius [m]")
         axes[2].legend()
@@ -1148,9 +1105,20 @@ class PropulsionSystem(Base):
 
         fig.suptitle(
             f"NACA {self.airfoil_type} | {int(self.n_blades)} blades | "
-            f"D={self.diameter:.3f} m | RPM={self.rpm:.0f}"
+            f"D={self.diameter:.3f} m | RPM={self.rpm:.0f}",
+            fontsize=11
         )
         fig.tight_layout()
+        return fig
+
+    @action(label="Plot spanwise distribution")
+    def plot_spanwise(self):
+        """GUI Action: chord, pitch and sectional thrust/torque distributions along the span."""
+        import matplotlib.pyplot as plt
+        fig = self._build_spanwise_fig(figsize=(7, 8))
+        if fig is None:
+            print("No spanwise distribution available.")
+            return
         plt.show()
 
     @action(label="Export STEP files")
@@ -1178,30 +1146,19 @@ class PropulsionSystem(Base):
         print(f"STEP geometry exported to {path}")
         return path
 
-    @action(label="Plot motor curve")
-    def plot_motor_curve(self):
-        """
-        GUI Action: matplotlib window showing the selected motor's
-        torque-vs-speed curve at the operating voltage, with the
-        operating point and 80 % current/power envelope marked.
-        """
+    def _build_motor_curve_fig(self, motor, name, figsize=(7, 5)):
+        """Build and return the motor torque-vs-speed figure."""
         import matplotlib.pyplot as plt
-        if not self.feasible_motors:
-            print("No feasible motor — nothing to plot.")
-            return
-        name, motor = self.best_motor
-        kv       = motor.kv
-        R        = motor.resistance / 1000   # mOhm → Ohm
-        kt       = motor.kt
-        V        = motor.voltage_required
-
-        rpm_arr   = [self.rpm * f for f in [i * 0.05 for i in range(1, 41)]]
+        kv     = motor.kv
+        R      = motor.resistance / 1000
+        kt     = motor.kt
+        V      = motor.voltage_required
+        kv_rad = kv * 2.0 * math.pi / 60.0
+        rpm_arr   = [self.rpm * i * 0.05 for i in range(1, 41)]
         omega_arr = [r * 2.0 * math.pi / 60.0 for r in rpm_arr]
-        kv_rad    = kv * 2.0 * math.pi / 60.0
-        torque    = [max(0.0, (V - om / kv_rad) * kt / max(R, 1e-6))
-                     for om in omega_arr]
+        torque    = [max(0.0, (V - om / kv_rad) * kt / max(R, 1e-6)) for om in omega_arr]
 
-        fig, ax = plt.subplots(figsize=(7, 5))
+        fig, ax = plt.subplots(figsize=figsize)
         ax.plot(rpm_arr, torque, label=f"{name} @ {V:.1f} V")
         ax.axhline(0.8 * motor.max_current * kt, color="red",
                    linestyle="--", label="80% current limit")
@@ -1209,10 +1166,21 @@ class PropulsionSystem(Base):
                    zorder=5, label="operating point")
         ax.set_xlabel("RPM")
         ax.set_ylabel("Torque [Nm]")
-        ax.set_title(f"Motor: {name}  |  Efficiency: {motor.efficiency:.1%}")
+        ax.set_title(f"Motor: {name}  |  Efficiency: {motor.efficiency:.1%}  |  KV: {kv} RPM/V")
         ax.grid(True, alpha=0.3)
         ax.legend()
         fig.tight_layout()
+        return fig
+
+    @action(label="Plot motor curve")
+    def plot_motor_curve(self):
+        """GUI Action: motor torque-vs-speed curve at the operating voltage."""
+        import matplotlib.pyplot as plt
+        if not self.feasible_motors:
+            print("No feasible motor — nothing to plot.")
+            return
+        name, motor = self.best_motor
+        self._build_motor_curve_fig(motor, name)
         plt.show()
 
     @action(label="Export design PDF")
@@ -1358,79 +1326,15 @@ class PropulsionSystem(Base):
             plt.close(fig)
 
             # ── Page 3: Spanwise distributions ───────────────────────────────
-            rows = self.propeller.spanwise_distribution
-            if rows:
-                r_sp  = [row[0] for row in rows]
-                chord = [row[1] * 1000 for row in rows]
-                pitch = [row[2] for row in rows]
-                dT    = [row[3] for row in rows]
-                dQ    = [row[4] * 1000 for row in rows]
-
-                prop  = self.propeller
-                r_hub = prop.hub_radius
-                r_tip = prop.diameter / 2
-                r_root = r_hub + prop.root_cutoff_ratio * (r_tip - r_hub)
-                eff_mc = max(prop.min_chord, prop.min_chord_fraction * (r_tip - r_hub)) * 1000
-
-                fig, axes = plt.subplots(3, 1, figsize=(8.27, 9), sharex=True)
-                axes[0].plot(r_sp, chord, marker=".")
-                axes[0].set_ylabel("chord [mm]")
-                axes[0].set_ylim(bottom=0)
-                axes[0].axhline(eff_mc, color="gray", linestyle=":", linewidth=1.0,
-                                label=f"min chord ({eff_mc:.1f} mm)")
-                axes[0].axvline(r_root, color="gray", linestyle="--", linewidth=1.0,
-                                label=f"aero start (r={r_root:.3f} m)")
-                axes[0].legend(fontsize=7)
-                axes[0].grid(True, alpha=0.3)
-
-                axes[1].plot(r_sp, pitch, marker=".", color="tab:orange")
-                axes[1].set_ylabel("pitch [deg]")
-                axes[1].axvline(r_root, color="gray", linestyle="--", linewidth=1.0)
-                axes[1].grid(True, alpha=0.3)
-
-                axes[2].plot(r_sp, dT, marker=".", label="dT [N]")
-                axes[2].plot(r_sp, dQ, marker=".", label="dQ [mNm]", color="tab:red")
-                axes[2].axvline(r_root, color="gray", linestyle="--", linewidth=1.0,
-                                label="aero start")
-                axes[2].set_ylabel("section load")
-                axes[2].set_xlabel("radius [m]")
-                axes[2].legend()
-                axes[2].grid(True, alpha=0.3)
-
-                fig.suptitle(
-                    f"Spanwise Distributions — NACA {self.airfoil_type} | "
-                    f"{int(self.n_blades)} blades | D={self.diameter:.3f} m | RPM={self.rpm:.0f}",
-                    fontsize=11
-                )
-                fig.tight_layout()
+            fig = self._build_spanwise_fig(figsize=(8.27, 9))
+            if fig is not None:
                 pdf.savefig(fig, bbox_inches="tight")
                 plt.close(fig)
 
             # ── Page 4: Motor curve ───────────────────────────────────────────
             if self.feasible_motors:
                 name, motor = self.best_motor
-                kv       = motor.kv
-                R        = motor.resistance / 1000
-                kt       = motor.kt
-                V        = motor.voltage_required
-                rpm_arr  = [self.rpm * f for f in [i * 0.05 for i in range(1, 41)]]
-                omega_arr = [r2 * 2.0 * math.pi / 60.0 for r2 in rpm_arr]
-                kv_rad   = kv * 2.0 * math.pi / 60.0
-                torque   = [max(0.0, (V - om / kv_rad) * kt / max(R, 1e-6))
-                            for om in omega_arr]
-                fig, ax = plt.subplots(figsize=(8.27, 5))
-                ax.plot(rpm_arr, torque, label=f"{name} @ {V:.1f} V")
-                ax.axhline(0.8 * motor.max_current * kt, color="red",
-                           linestyle="--", label="80% current limit")
-                ax.scatter([self.rpm], [motor.torque_req], color="black",
-                           zorder=5, label="operating point")
-                ax.set_xlabel("RPM")
-                ax.set_ylabel("Torque [Nm]")
-                ax.set_title(f"Motor: {name}  |  Efficiency: {motor.efficiency:.1%}  "
-                             f"|  KV: {kv} RPM/V")
-                ax.grid(True, alpha=0.3)
-                ax.legend()
-                fig.tight_layout()
+                fig = self._build_motor_curve_fig(motor, name, figsize=(8.27, 5))
                 pdf.savefig(fig, bbox_inches="tight")
                 plt.close(fig)
             else:

@@ -301,7 +301,6 @@ class BladeSection(Base):
         """
         return [Point(0.0, pt[0] - 0.5, pt[1]) for pt in self.airfoil_points]
 
-    # Each func below receives parse=False because they depend on runtime-computed chord, radius, pitch
     @Part(parse=False)
     def fitted_curve(self):
         return FittedCurve(points=self.section_points)

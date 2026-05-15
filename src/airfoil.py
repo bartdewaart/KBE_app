@@ -186,9 +186,7 @@ class Airfoil(Base):
             m = int(self.naca_code[0]) / 100.0
             p = int(self.naca_code[1]) / 10.0
 
-            # Domain Protection: avoid division by zero for symmetric
-            # airfoils where p == 0 (e.g. NACA 0012)
-            if p < 1e-6:
+            if p < 1e-6:  # symmetric airfoil (e.g. NACA 0012) — no camber
                 xcam = np.zeros_like(x)
             else:
                 xcam = np.where(
